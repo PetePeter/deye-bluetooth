@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+*.key
+*.pem
+*.p12
+captures/
+secrets/
+.deye_token.json
