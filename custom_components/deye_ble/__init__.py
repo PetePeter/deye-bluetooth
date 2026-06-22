@@ -11,8 +11,7 @@ from .const import CONF_ADDRESS, CONF_LOGGER_SN, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# Platforms are added in P4 (sensor, select, number, etc.)
-PLATFORMS: list[str] = []
+PLATFORMS: list[str] = ["sensor", "number", "select", "time"]
 
 
 async def async_setup_entry(hass, entry) -> bool:
@@ -35,7 +34,7 @@ async def async_setup_entry(hass, entry) -> bool:
         transport_factory=_make_transport,
     )
 
-    await coordinator.coordinator.async_config_entry_first_refresh()
+    await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 

@@ -18,7 +18,7 @@ from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.helpers.device_registry import format_mac
 
 from .const import CONF_ADDRESS, CONF_LOGGER_SN, DOMAIN
-from .coordinator import validate_logger_sn
+from .helpers import validate_logger_sn
 
 _LOGGER = logging.getLogger(__name__)
 
