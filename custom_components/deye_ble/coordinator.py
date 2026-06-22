@@ -11,10 +11,11 @@ import time
 from datetime import timedelta
 
 from homeassistant.components.bluetooth import async_ble_device_from_address
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import CONFIG_READ_INTERVAL, DOMAIN
-from .helpers import async_poll
+from .const import CONFIG_READ_INTERVAL, DEFAULT_DRY_RUN, DEFAULT_REASSERT, DOMAIN
+from .helpers import async_poll, detect_drift, verify_readback
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,7 +28,11 @@ _CARRY_KEYS = _CONFIG_KEYS + ("charge_soc", "charge_start", "charge_end")
 
 class DeyeBleCoordinator(DataUpdateCoordinator):
     """Polls telemetry every cycle; config (work_mode + max_sell) only every
-    CONFIG_READ_INTERVAL or when mark_config_dirty() is called."""
+    CONFIG_READ_INTERVAL or when mark_config_dirty() is called.
+
+    Supports P5 write safety: dry-run (default ON), read-back verify, and
+    optional local-wins reassert.
+    """
 
     def __init__(
         self,
@@ -36,6 +41,8 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         transport_factory,  # (BLEDevice) -> DeyeBleTransport
         scan_interval: int = 300,
         config_interval: int = CONFIG_READ_INTERVAL,
+        dry_run: bool = DEFAULT_DRY_RUN,
+        reassert: bool = DEFAULT_REASSERT,
     ) -> None:
         super().__init__(
             hass,
@@ -48,6 +55,25 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         self._config_interval = config_interval
         self._last_config_read = 0.0
         self._config_dirty = True  # always read config on first cycle
+        self._dry_run = dry_run
+        self._reassert = reassert
+        self._tracked_values: dict[int, int | str] = {}
+
+    @property
+    def dry_run(self) -> bool:
+        return self._dry_run
+
+    @dry_run.setter
+    def dry_run(self, value: bool) -> None:
+        self._dry_run = value
+
+    @property
+    def reassert(self) -> bool:
+        return self._reassert
+
+    @reassert.setter
+    def reassert(self, value: bool) -> None:
+        self._reassert = value
 
     def mark_config_dirty(self) -> None:
         self._config_dirty = True
@@ -89,17 +115,46 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             self._last_config_read = time.monotonic()
             self._config_dirty = False
 
+        # Reassert: if enabled, detect drift and re-apply drifted values once.
+        if self._reassert and self._tracked_values:
+            drifted = detect_drift(self._tracked_values, data)
+            if drifted:
+                _LOGGER.info("reassert: correcting %d drifted register(s)", len(drifted))
+                for reg, expected in drifted:
+                    try:
+                        await self.async_write(reg, expected)
+                    except Exception as e:
+                        _LOGGER.warning("reassert write to 0x%04X failed: %s", reg, e)
+
         return data
 
     async def async_write(self, reg: int, value: int) -> None:
         """Write a single holding register over BLE.
 
         Opens a fresh transport session and handshakes before writing.
-        Write/poll serialization and dry-run safety are hardened in P5.
+        When dry-run is ON, logs intent and returns without issuing a GATT write.
+        When dry-run is OFF, writes, reads back, and verifies the value.
+        Tracks the value for optional drift detection (reassert).
         """
+        # Dry-run is the safety default: never touch the radio, just log intent.
+        # Checked first so it works even when the device is momentarily absent.
+        if self._dry_run:
+            _LOGGER.info(
+                "dry-run: would write reg 0x%04X = %d (no GATT write issued)", reg, value
+            )
+            return
+
         ble_device = async_ble_device_from_address(self.hass, self._address)
         if ble_device is None:
-            raise RuntimeError(f"BLE device {self._address} not found")
+            raise HomeAssistantError(f"BLE device {self._address} not found")
+
         async with self._transport_factory(ble_device) as transport:
             await transport.handshake()
             await transport.write(reg, value)
+            # Read back to confirm.
+            readback = await transport.read(reg, 1)
+            actual = readback[0]
+            verify_readback(reg, value, actual)
+
+        # Track for drift detection.
+        self._tracked_values[reg] = value

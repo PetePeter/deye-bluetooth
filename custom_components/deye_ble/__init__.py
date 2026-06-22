@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from .const import CONF_ADDRESS, CONF_LOGGER_SN, DOMAIN
+from .const import CONF_ADDRESS, CONF_DRY_RUN, CONF_LOGGER_SN, CONF_REASSERT, DEFAULT_DRY_RUN, DEFAULT_REASSERT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,15 +28,24 @@ async def async_setup_entry(hass, entry) -> bool:
         return DeyeBleTransport(ble_device)
 
     from .coordinator import DeyeBleCoordinator
+    options = entry.options
     coordinator = DeyeBleCoordinator(
         hass,
         address=address,
         transport_factory=_make_transport,
+        dry_run=options.get(CONF_DRY_RUN, DEFAULT_DRY_RUN),
+        reassert=options.get(CONF_REASSERT, DEFAULT_REASSERT),
     )
 
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    async def _on_options_update(hass, entry):
+        coordinator.dry_run = entry.options.get(CONF_DRY_RUN, DEFAULT_DRY_RUN)
+        coordinator.reassert = entry.options.get(CONF_REASSERT, DEFAULT_REASSERT)
+
+    entry.async_on_unload(entry.add_update_listener(_on_options_update))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

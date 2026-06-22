@@ -20,6 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 class Transport(Protocol):
     async def handshake(self) -> None: ...
     async def read(self, address: int, count: int) -> list[int]: ...
+    async def write(self, address: int, value: int) -> None: ...
 
 
 # --- Pure async poll (unit-testable with a fake transport) ------------------
@@ -63,6 +64,82 @@ def validate_logger_sn(sn: str) -> str:
         raise ValueError("Logger serial must be alphanumeric")
     return sn
 
+
+# --- Control register ↔ entity key mapping --------------------------------
+
+# Bidirectional mapping for the 5 writable control registers.
+_REG_TO_KEY: dict[int, str] = {
+    r.REG_WORK_MODE: "work_mode",
+    r.REG_MAX_SELL_POWER: "max_sell_power",
+    r.REG_TOU_SLOT2_START: "charge_start",
+    r.REG_TOU_SLOT3_START: "charge_end",
+    r.REG_CHARGE_SOC: "charge_soc",
+}
+_KEY_TO_REG: dict[str, int] = {v: k for k, v in _REG_TO_KEY.items()}
+
+
+def register_to_key(reg: int) -> str | None:
+    """Map a control register address to its entity key, or None."""
+    return _REG_TO_KEY.get(reg)
+
+
+def key_to_register(key: str) -> int | None:
+    """Map an entity key to its control register address, or None."""
+    return _KEY_TO_REG.get(key)
+
+
+# --- Read-back verification ------------------------------------------------
+
+class ReadbackError(ValueError):
+    """Raised when a write was acked but the device read-back differs."""
+
+
+def verify_readback(reg: int, expected: int, actual: int) -> None:
+    """Compare a write's expected value against the device read-back.
+
+    Returns ``None`` on match.  Raises :class:`ReadbackError` on mismatch.
+    """
+    if expected != actual:
+        raise ReadbackError(
+            f"readback mismatch at 0x{reg:04X}: expected {expected}, got {actual}"
+        )
+
+
+# --- Drift detection (for local-wins reassert) ----------------------------
+
+def detect_drift(
+    tracked: dict[int, int | str],
+    current: dict[str, float | int | str],
+) -> list[tuple[int, int | str]]:
+    """Compare last HA-set register values against current device values.
+
+    Tracked values are the raw ints passed to ``async_write``.  For comparison,
+    work-mode ints are converted to their decoded string label (matching what
+    ``registers.decode`` returns).  Other registers stay as ints.
+
+    Returns a list of ``(register, raw_tracked_value)`` pairs that have drifted.
+    Registers not in the control set are ignored.  Missing keys in *current*
+    are silently skipped (can't compare what isn't reported).
+    """
+    drifted: list[tuple[int, int | str]] = []
+    for reg, expected in tracked.items():
+        key = register_to_key(reg)
+        if key is None:
+            continue
+        if key not in current:
+            continue
+        # Work-mode: tracked is a raw int (0, 1, 2), current is a string label.
+        compare_val = expected
+        if reg == r.REG_WORK_MODE and isinstance(expected, int):
+            compare_val = r.WORK_MODE_LABELS.get(
+                expected, f"Unknown ({expected})"
+            )
+        if current[key] != compare_val:
+            drifted.append((reg, expected))
+    return drifted
+
+
+# --- Daily baseline calculation --------------------------------------------
 
 def daily_calc(
     baseline: float | None,
