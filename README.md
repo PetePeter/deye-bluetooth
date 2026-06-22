@@ -55,6 +55,34 @@ running and untouched.
 4. Go to **Settings → Devices & Services → Add Integration** and search for
    **Deye Bluetooth (Local)**.
 
+## Deployment & updating
+
+This integration is distributed **only** through HACS as a custom repository —
+there is no separate build, server, or copy-to-host step. It currently ships
+**no GitHub releases or tags**, so HACS tracks the `master` branch HEAD. In
+practice that means **pushing to `master` is the deploy**: the new code is live
+to anyone who redownloads.
+
+```mermaid
+flowchart LR
+    A[Commit + push to master] --> B[HACS: Redownload latest]
+    B --> C[Restart Home Assistant]
+    C --> D[Updated integration running]
+```
+
+To roll out a change to an installed instance:
+
+1. `git push` to `master` (done by the maintainer).
+2. On the HA box: **HACS → Deye Bluetooth (Local) → ⋮ → Redownload** and pick
+   the `master` branch.
+3. **Restart Home Assistant** (Settings → System → Restart) — Python
+   integrations are only reloaded on restart.
+
+> **Optional, for versioned releases:** bump `version` in
+> `custom_components/deye_ble/manifest.json` and publish a matching GitHub
+> release/tag. Once any release exists, HACS switches from branch-tracking to
+> offering the tagged versions instead.
+
 ## Configuration
 
 The config flow supports two paths:
