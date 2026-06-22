@@ -36,6 +36,8 @@ READ_BLOCKS: list[tuple[int, int]] = [
 # Control registers, read on the slower config cycle (P3).
 CONTROL_BLOCKS: list[tuple[int, int]] = [
     (0x008E, 2),   # 0x008E work mode, 0x008F max sell power
+    (0x0095, 2),   # 0x0095 charge window start, 0x0096 charge window end (HHMM)
+    (0x00A7, 1),   # 0x00A7 charge target SOC (%)
 ]
 
 
@@ -96,7 +98,8 @@ _DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
 
     # Control mirrors (decoded from CONTROL_BLOCKS)
     "max_sell_power":          (0x008F, 1,    False, 0),     # W
-    # work_mode handled specially below (enum label, not numeric scale)
+    "charge_soc":              (0x00A7, 1,    False, 0),     # % (TOU charge target)
+    # work_mode (enum) and charge_start/charge_end (HHMM) handled specially below.
 }
 
 
@@ -137,6 +140,17 @@ def decode(words_by_reg: dict[int, list[int]]) -> dict[str, float | int | str]:
     work_mode_raw = _lookup(words_by_reg, REG_WORK_MODE)
     if work_mode_raw is not None:
         result["work_mode"] = WORK_MODE_LABELS.get(work_mode_raw, f"Unknown ({work_mode_raw})")
+
+    # TOU charge window times are stored as HHMM; decode to "HH:MM" strings.
+    # An unset/invalid slot value (e.g. 0xFFFF) is omitted rather than published.
+    for key, reg in (("charge_start", REG_TOU_SLOT2_START), ("charge_end", REG_TOU_SLOT3_START)):
+        raw = _lookup(words_by_reg, reg)
+        if raw is None:
+            continue
+        try:
+            result[key] = decode_hhmm(raw)
+        except ValueError:
+            continue
 
     return result
 

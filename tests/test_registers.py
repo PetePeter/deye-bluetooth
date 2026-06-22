@@ -140,6 +140,21 @@ def test_work_mode_decode(raw, label):
     assert r.decode({0x008E: [raw]})["work_mode"] == label
 
 
+def test_tou_charge_window_decode():
+    # 0x0095 start, 0x0096 end (HHMM), 0x00A7 target SOC %.
+    data = r.decode({0x0095: [1100, 1500], 0x00A7: [100]})
+    assert data["charge_start"] == "11:00"
+    assert data["charge_end"] == "15:00"
+    assert data["charge_soc"] == 100
+
+
+def test_tou_invalid_hhmm_is_omitted():
+    # An unset slot (0xFFFF) is not a valid HHMM -> key omitted, not fabricated.
+    data = r.decode({0x0095: [0xFFFF, 0xFFFF]})
+    assert "charge_start" not in data
+    assert "charge_end" not in data
+
+
 def test_work_mode_unknown_value():
     assert r.decode({0x008E: [7]})["work_mode"] == "Unknown (7)"
 
