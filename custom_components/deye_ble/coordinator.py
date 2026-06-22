@@ -6,6 +6,7 @@ SN validation live in helpers.py and stay unit-testable without HA.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import timedelta
@@ -58,6 +59,10 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         self._dry_run = dry_run
         self._reassert = reassert
         self._tracked_values: dict[int, int | str] = {}
+        # The logger accepts ONE BLE central at a time, so polls and writes must
+        # never hold a connection simultaneously, or bleak reports
+        # "br-connection-canceled". This lock serializes all BLE sessions.
+        self._ble_lock = asyncio.Lock()
 
     @property
     def dry_run(self) -> bool:
@@ -97,8 +102,9 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         config_due = self._config_due()
 
         try:
-            async with self._transport_factory(ble_device) as transport:
-                data = await async_poll(transport, with_config=config_due)
+            async with self._ble_lock:
+                async with self._transport_factory(ble_device) as transport:
+                    data = await async_poll(transport, with_config=config_due)
         except Exception as e:
             _LOGGER.warning("BLE poll failed for %s: %s", self._address, e)
             raise UpdateFailed(str(e)) from e
@@ -148,13 +154,15 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         if ble_device is None:
             raise HomeAssistantError(f"BLE device {self._address} not found")
 
-        async with self._transport_factory(ble_device) as transport:
-            await transport.handshake()
-            await transport.write(reg, value)
-            # Read back to confirm.
-            readback = await transport.read(reg, 1)
-            actual = readback[0]
-            verify_readback(reg, value, actual)
+        # Serialize against the poll — one BLE central at a time on the logger.
+        async with self._ble_lock:
+            async with self._transport_factory(ble_device) as transport:
+                await transport.handshake()
+                await transport.write(reg, value)
+                # Read back to confirm.
+                readback = await transport.read(reg, 1)
+                actual = readback[0]
+                verify_readback(reg, value, actual)
 
         # Track for drift detection.
         self._tracked_values[reg] = value
