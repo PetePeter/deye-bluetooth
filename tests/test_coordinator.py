@@ -162,6 +162,12 @@ async def test_async_poll_config_block_failure_is_non_fatal():
 
 # --- SN validation tests ----------------------------------------------------
 
+def test_real_logger_advert_name_is_valid_sn():
+    # The Deye logger advertises its SN as the BLE name; config_flow auto-skips
+    # the SN step when validate_logger_sn accepts the advert name.
+    assert validate_logger_sn("DEYE00000001") == "DEYE00000001"
+
+
 @pytest.mark.parametrize("good", [
     "A1234567",        # 8 chars
     "DEYELOGGER123",   # 13 chars

@@ -65,7 +65,7 @@ class DeyeBleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._discovered_name = discovery_info.name
         self.context["title_placeholders"] = {"name": discovery_info.name}
 
-        return await self.async_step_confirm()
+        return await self._finish_or_confirm()
 
     async def async_step_user(
         self, user_input: dict | None = None
@@ -84,7 +84,7 @@ class DeyeBleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._abort_if_unique_id_configured()
                     self._discovered_address = address
                     self._discovered_name = info.name
-                    return await self.async_step_confirm()
+                    return await self._finish_or_confirm()
 
         # Build list of discovered BLE devices matching our service UUID.
         discovered = _deye_devices(self.hass)
@@ -102,6 +102,28 @@ class DeyeBleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=schema,
         )
 
+    def _create_entry(self, sn: str) -> ConfigFlowResult:
+        return self.async_create_entry(
+            title=self._discovered_name or sn,
+            data={
+                CONF_ADDRESS: self._discovered_address,
+                CONF_LOGGER_SN: sn,
+            },
+        )
+
+    async def _finish_or_confirm(self) -> ConfigFlowResult:
+        """Skip the SN step when the advertised name is already a valid serial.
+
+        Deye loggers advertise their serial as the BLE name, so in the normal
+        case the user has nothing to type. Fall back to the confirm form only
+        when the advert name isn't a usable SN.
+        """
+        try:
+            sn = validate_logger_sn(self._discovered_name or "")
+        except ValueError:
+            return await self.async_step_confirm()
+        return self._create_entry(sn)
+
     async def async_step_confirm(
         self, user_input: dict | None = None
     ) -> ConfigFlowResult:
@@ -113,13 +135,7 @@ class DeyeBleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except ValueError as exc:
                 errors[CONF_LOGGER_SN] = str(exc)
             else:
-                return self.async_create_entry(
-                    title=self._discovered_name or sn,
-                    data={
-                        CONF_ADDRESS: self._discovered_address,
-                        CONF_LOGGER_SN: sn,
-                    },
-                )
+                return self._create_entry(sn)
 
         schema = vol.Schema({
             vol.Required(
