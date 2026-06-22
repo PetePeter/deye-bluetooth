@@ -1,13 +1,13 @@
 {
   "domain": "deye_ble",
   "name": "Deye Bluetooth (Local)",
+  "bluetooth": [{ "service_uuid": "00000922-0000-1000-8000-00805f9b34fb" }],
   "codeowners": ["@PetePeter"],
   "config_flow": true,
   "dependencies": ["bluetooth_adapters"],
   "documentation": "https://github.com/PetePeter/deye-bluetooth",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/PetePeter/deye-bluetooth/issues",
-  "bluetooth": [{ "service_uuid": "00000922-0000-1000-8000-00805f9b34fb" }],
   "requirements": ["bleak>=0.22.0"],
   "version": "0.0.1"
 }
