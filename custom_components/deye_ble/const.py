@@ -17,6 +17,12 @@ MIN_SCAN_INTERVAL = 30               # floor to protect BLE reconnect stability
 MAX_SCAN_INTERVAL = 600
 CONFIG_READ_INTERVAL = 900           # seconds — work_mode + max_sell re-read
 
+# How many consecutive BLE poll failures to ride out before surfacing the
+# entities as unavailable. Below this, the last good values are kept so a brief
+# BLE hiccup doesn't flip every sensor to "unknown". A genuine outage still
+# surfaces once the count is reached.
+MAX_POLL_FAILURES = 10
+
 DEVICE_NAME = "Deye Inverter (BLE)"  # coexistence with deyecloud "Deye Inverter"
 
 # Re-export for convenience

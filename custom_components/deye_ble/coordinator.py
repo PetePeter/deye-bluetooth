@@ -15,7 +15,13 @@ from homeassistant.components.bluetooth import async_ble_device_from_address
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import CONFIG_READ_INTERVAL, DEFAULT_DRY_RUN, DEFAULT_REASSERT, DOMAIN
+from .const import (
+    CONFIG_READ_INTERVAL,
+    DEFAULT_DRY_RUN,
+    DEFAULT_REASSERT,
+    DOMAIN,
+    MAX_POLL_FAILURES,
+)
 from .helpers import async_poll, detect_drift, verify_readback
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,6 +50,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         config_interval: int = CONFIG_READ_INTERVAL,
         dry_run: bool = DEFAULT_DRY_RUN,
         reassert: bool = DEFAULT_REASSERT,
+        max_failures: int = MAX_POLL_FAILURES,
     ) -> None:
         super().__init__(
             hass,
@@ -58,6 +65,8 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         self._config_dirty = True  # always read config on first cycle
         self._dry_run = dry_run
         self._reassert = reassert
+        self._max_failures = max_failures
+        self._consecutive_failures = 0
         self._tracked_values: dict[int, int | str] = {}
         # The logger accepts ONE BLE central at a time, so polls and writes must
         # never hold a connection simultaneously, or bleak reports
@@ -95,19 +104,21 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         return ble_device
 
     async def _async_update_data(self) -> dict:
-        ble_device = self._resolve_device()
-
-        # Decide once per cycle — re-checking after the await could acknowledge a
-        # dirty mark that arrived mid-poll without the config actually being read.
-        config_due = self._config_due()
-
         try:
+            ble_device = self._resolve_device()
+
+            # Decide once per cycle — re-checking after the await could acknowledge
+            # a dirty mark that arrived mid-poll without config actually being read.
+            config_due = self._config_due()
+
             async with self._ble_lock:
                 async with self._transport_factory(ble_device) as transport:
                     data = await async_poll(transport, with_config=config_due)
         except Exception as e:
-            _LOGGER.warning("BLE poll failed for %s: %s", self._address, e)
-            raise UpdateFailed(str(e)) from e
+            return self._handle_poll_failure(e)
+
+        # A good cycle clears the transient-failure run.
+        self._consecutive_failures = 0
 
         # Carry forward config + write-only control values not present this read.
         prev = self.data
@@ -133,6 +144,30 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
                         _LOGGER.warning("reassert write to 0x%04X failed: %s", reg, e)
 
         return data
+
+    def _handle_poll_failure(self, exc: Exception) -> dict:
+        """Ride out transient BLE failures by keeping the last good values.
+
+        Returns the previous data (so entities stay available) until
+        *max_failures* consecutive failures accumulate, then re-raises as
+        UpdateFailed so a genuine outage surfaces. With no prior data (e.g. the
+        first refresh), the failure propagates immediately — there is nothing to
+        carry forward.
+        """
+        self._consecutive_failures += 1
+
+        if self.data is not None and self._consecutive_failures < self._max_failures:
+            _LOGGER.warning(
+                "BLE poll failed for %s (%d/%d), keeping last values: %s",
+                self._address,
+                self._consecutive_failures,
+                self._max_failures,
+                exc,
+            )
+            return self.data
+
+        _LOGGER.warning("BLE poll failed for %s: %s", self._address, exc)
+        raise UpdateFailed(str(exc)) from exc
 
     async def async_write(self, reg: int, value: int) -> None:
         """Write a single holding register over BLE.

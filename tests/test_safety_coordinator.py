@@ -267,3 +267,87 @@ class TestBLEBusy:
 
         with pytest.raises(UpdateFailed, match="not found"):
             await coordinator._async_update_data()
+
+
+# --- Transient failure tolerance ---------------------------------------------
+
+class TestFailureTolerance:
+    """A flaky BLE poll must not flip every entity to unknown — the last good
+    values are kept until max_failures consecutive failures accumulate."""
+
+    def _make_coordinator(self, transport, *, max_failures=10):
+        from custom_components.deye_ble.coordinator import DeyeBleCoordinator
+
+        coordinator = DeyeBleCoordinator(
+            hass=None,
+            address="AA:BB:CC:DD:EE:FF",
+            transport_factory=lambda _dev: transport,
+            max_failures=max_failures,
+        )
+        coordinator._resolve_device = lambda: None
+        return coordinator
+
+    @pytest.mark.asyncio
+    async def test_transient_failure_keeps_last_good_data(self):
+        coordinator = self._make_coordinator(WriteableFakeTransport())
+
+        good = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(good)  # populate coordinator.data
+
+        # Next poll fails — but we have prior data and are under threshold.
+        coordinator._transport_factory = (
+            lambda _dev: WriteableFakeTransport(fail_on_block=0x024A)
+        )
+        result = await coordinator._async_update_data()
+
+        assert result["solar_power"] == good["solar_power"]
+        assert coordinator._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_failures_reaching_threshold_raise_update_failed(self):
+        from homeassistant.helpers.update_coordinator import UpdateFailed
+
+        coordinator = self._make_coordinator(
+            WriteableFakeTransport(), max_failures=3
+        )
+        good = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(good)
+
+        coordinator._transport_factory = (
+            lambda _dev: WriteableFakeTransport(fail_on_block=0x024A)
+        )
+
+        # Failures 1 and 2 are tolerated.
+        await coordinator._async_update_data()
+        await coordinator._async_update_data()
+        # Failure 3 hits the threshold and surfaces.
+        with pytest.raises(UpdateFailed, match="read failed"):
+            await coordinator._async_update_data()
+
+    @pytest.mark.asyncio
+    async def test_success_resets_failure_count(self):
+        coordinator = self._make_coordinator(WriteableFakeTransport())
+        good = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(good)
+
+        coordinator._transport_factory = (
+            lambda _dev: WriteableFakeTransport(fail_on_block=0x024A)
+        )
+        await coordinator._async_update_data()
+        assert coordinator._consecutive_failures == 1
+
+        # A recovered poll clears the run.
+        coordinator._transport_factory = lambda _dev: WriteableFakeTransport()
+        await coordinator._async_update_data()
+        assert coordinator._consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_first_failure_with_no_prior_data_raises(self):
+        from homeassistant.helpers.update_coordinator import UpdateFailed
+
+        coordinator = self._make_coordinator(
+            WriteableFakeTransport(fail_on_block=0x024A)
+        )
+        # No prior data — nothing to carry forward, so it must surface at once.
+        with pytest.raises(UpdateFailed, match="read failed"):
+            await coordinator._async_update_data()
