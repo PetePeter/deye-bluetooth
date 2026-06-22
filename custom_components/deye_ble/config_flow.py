@@ -17,7 +17,19 @@ from homeassistant.components.bluetooth import (
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.helpers.device_registry import format_mac
 
-from .const import CONF_ADDRESS, CONF_DRY_RUN, CONF_LOGGER_SN, CONF_REASSERT, DEFAULT_DRY_RUN, DEFAULT_REASSERT, DOMAIN
+from .const import (
+    CONF_ADDRESS,
+    CONF_DRY_RUN,
+    CONF_LOGGER_SN,
+    CONF_REASSERT,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_DRY_RUN,
+    DEFAULT_REASSERT,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
+)
 from .helpers import validate_logger_sn
 
 _LOGGER = logging.getLogger(__name__)
@@ -154,7 +166,7 @@ class DeyeBleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class DeyeBleOptionsFlowHandler(config_entries.OptionsFlow):
-    """Options flow for dry-run and reassert toggles."""
+    """Options flow for scan interval, dry-run and reassert."""
 
     async def async_step_init(self, user_input: dict | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -162,6 +174,10 @@ class DeyeBleOptionsFlowHandler(config_entries.OptionsFlow):
 
         current = self.config_entry.options
         schema = vol.Schema({
+            vol.Required(
+                CONF_SCAN_INTERVAL,
+                default=current.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+            ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)),
             vol.Required(
                 CONF_DRY_RUN,
                 default=current.get(CONF_DRY_RUN, DEFAULT_DRY_RUN),

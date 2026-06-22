@@ -7,7 +7,17 @@ from __future__ import annotations
 
 import logging
 
-from .const import CONF_ADDRESS, CONF_DRY_RUN, CONF_LOGGER_SN, CONF_REASSERT, DEFAULT_DRY_RUN, DEFAULT_REASSERT, DOMAIN
+from .const import (
+    CONF_ADDRESS,
+    CONF_DRY_RUN,
+    CONF_LOGGER_SN,
+    CONF_REASSERT,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_DRY_RUN,
+    DEFAULT_REASSERT,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +43,7 @@ async def async_setup_entry(hass, entry) -> bool:
         hass,
         address=address,
         transport_factory=_make_transport,
+        scan_interval=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
         dry_run=options.get(CONF_DRY_RUN, DEFAULT_DRY_RUN),
         reassert=options.get(CONF_REASSERT, DEFAULT_REASSERT),
     )
@@ -42,8 +53,12 @@ async def async_setup_entry(hass, entry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     async def _on_options_update(hass, entry):
+        from datetime import timedelta
         coordinator.dry_run = entry.options.get(CONF_DRY_RUN, DEFAULT_DRY_RUN)
         coordinator.reassert = entry.options.get(CONF_REASSERT, DEFAULT_REASSERT)
+        coordinator.update_interval = timedelta(
+            seconds=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        )
 
     entry.async_on_unload(entry.add_update_listener(_on_options_update))
 
