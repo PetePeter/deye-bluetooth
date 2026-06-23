@@ -24,11 +24,12 @@ from __future__ import annotations
 # (the app used 8) so the block reaches inverter_temp at 0x021D.
 
 READ_BLOCKS: list[tuple[int, int]] = [
+    (0x00D2, 4),   # 0x00D2..0x00D5 — BMS charge/discharge voltage + current limits
     (0x0202, 14),  # 0x0202..0x020F — energy totals + daily grid
     (0x0210, 14),  # 0x0210..0x021D — daily/total solar + temperatures
     (0x024A, 6),   # 0x024A..0x024F — battery temp/voltage/soc/power
-    (0x0256, 10),  # 0x0256..0x025F — grid power (at 0x025F)
-    (0x0270, 16),  # 0x0270..0x027F — inverter output L1-3
+    (0x0256, 12),  # 0x0256..0x0261 — grid power (0x025F) + grid frequency (0x0261)
+    (0x0270, 16),  # 0x0270..0x027F — inverter output L1-3 + grid voltages 0x0273-0x0275
     (0x0280, 16),  # 0x0280..0x028F — house load / UPS load
     (0x02A0, 16),  # 0x02A0..0x02AF — PV input power
 ]
@@ -87,6 +88,19 @@ _DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
     "battery_voltage":         (0x024B, 0.01, False, 0),     # V
     "battery_temp":            (0x024A, 0.1,  False, 1000),  # °C
     "inverter_temp":           (0x021D, 0.1,  False, 1000),  # °C
+
+    # BMS limits (slow telemetry, cross-checked against the app BMS panel)
+    "bms_charge_voltage":         (0x00D2, 0.01, False, 0),  # V
+    "bms_discharge_voltage":      (0x00D3, 0.01, False, 0),  # V
+    "bms_charge_current_limit":   (0x00D4, 1,    False, 0),  # A
+    "bms_discharge_current_limit":(0x00D5, 1,    False, 0),  # A
+
+    # Grid AC metrics (÷10 V, ÷100 Hz). Phase order is L1, L3, L2 — only the L2
+    # register (0x0275) was directly cross-checked against the app.
+    "grid_voltage_l1":         (0x0273, 0.1,  False, 0),     # V
+    "grid_voltage_l3":         (0x0274, 0.1,  False, 0),     # V
+    "grid_voltage_l2":         (0x0275, 0.1,  False, 0),     # V
+    "grid_frequency":          (0x0261, 0.01, False, 0),     # Hz
 
     # Energy — daily (kWh)
     "daily_solar":             (0x0211, 0.1,  False, 0),

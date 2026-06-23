@@ -134,7 +134,7 @@ flowchart TD
 
 ## Entities
 
-### Sensors (21 + 1 derived)
+### Sensors (29 + 1 derived)
 
 | Key | Name | Unit | Source register |
 |-----|------|------|-----------------|
@@ -159,7 +159,24 @@ flowchart TD
 | `inverter_power_l1` | Inverter Output L1 | W | `0x0279` |
 | `inverter_power_l2` | Inverter Output L2 | W | `0x027A` |
 | `inverter_power_l3` | Inverter Output L3 | W | `0x027B` |
+| `grid_voltage_l1` | Grid Voltage L1 | V | `0x0273` |
+| `grid_voltage_l2` | Grid Voltage L2 | V | `0x0275` |
+| `grid_voltage_l3` | Grid Voltage L3 | V | `0x0274` |
+| `grid_frequency` | Grid Frequency | Hz | `0x0261` |
+| `bms_charge_voltage` | BMS Charge Voltage | V | `0x00D2` |
+| `bms_discharge_voltage` | BMS Discharge Voltage | V | `0x00D3` |
+| `bms_charge_current_limit` | BMS Charge Current Limit | A | `0x00D4` |
+| `bms_discharge_current_limit` | BMS Discharge Current Limit | A | `0x00D5` |
 | `daily_consumption` | Consumption Today | kWh | derived from `0x020F` |
+
+> Grid voltage phase order is L1, L3, L2 across `0x0273`–`0x0275`; only L2
+> (`0x0275`) was directly cross-checked against the app.
+
+### Binary sensors
+
+| Entity | Source | Description |
+|--------|--------|-------------|
+| `binary_sensor.grid_connected` | inferred from grid voltages | On when any grid phase is energised (>100 V); off when all phases collapse. No verified relay register, so it is derived rather than read. |
 
 ### Controls
 
@@ -176,8 +193,7 @@ flowchart TD
 
 | Entity | Reason |
 |--------|--------|
-| `binary_sensor.grid_connected` | No verified BLE register for grid-connection state |
-| Grid voltages L1–L3 | Registers exist (`0x0258`/`0x0273`–`0x0275`) but scaling not confirmed against live values |
+| `discharge_soc` (dedicated register) | No standalone register — implemented instead via the TOU non-charge slot SOCs (see Discharge SOC control) |
 
 ## Protocol
 

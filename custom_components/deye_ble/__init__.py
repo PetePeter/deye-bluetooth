@@ -21,7 +21,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[str] = ["sensor", "number", "select", "time"]
+PLATFORMS: list[str] = ["binary_sensor", "sensor", "number", "select", "time"]
 
 
 async def async_setup_entry(hass, entry) -> bool:

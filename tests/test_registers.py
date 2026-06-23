@@ -18,6 +18,7 @@ from custom_components.deye_ble import registers as r
 # --- Captured frames (block_start -> raw +ok= response) ---------------------
 
 FRAMES: dict[int, str] = {
+    0x00D2: "+ok=01030816441252025604330936",  # BMS: chg V 57.00, dis V 46.90, limits 598/1075
     0x0202: "+ok=01031C00040068349B000031A70000000000043BEC000010B00000006C2DC084C7",
     0x0210: "+ok=01031C0000005100000000000000000C890000000000000000000004E205E665A3",
     0x024A: "+ok=01030C046A14A6002E0000FED8000D9095",
@@ -167,6 +168,28 @@ def test_discharge_soc_regs_are_the_non_charge_slots():
     # The five slots written as the discharge floor — slot 2 (charge) excluded.
     assert r.DISCHARGE_SOC_REGS == [0x00A6, 0x00A8, 0x00A9, 0x00AA, 0x00AB]
     assert r.REG_CHARGE_SOC not in r.DISCHARGE_SOC_REGS
+
+
+def test_grid_voltages_decode_from_real_0x0270_frame(poll):
+    # Phase volts at 0x0273/0x0274/0x0275 (÷10). Order is L1, L3, L2 — the L2
+    # register (0x0275) was the one cross-checked against the app.
+    assert poll["grid_voltage_l1"] == 241.9  # 0x0273 = 2419
+    assert poll["grid_voltage_l3"] == 236.3  # 0x0274 = 2363
+    assert poll["grid_voltage_l2"] == 237.1  # 0x0275 = 2371
+
+
+def test_grid_frequency_decode():
+    # 0x0261 ÷100 Hz.
+    assert r.decode({0x0261: [5000]})["grid_frequency"] == 50.0
+
+
+def test_bms_limits_decode():
+    # 0x00D2 block: charge V ÷100, discharge V ÷100, current limits 1:1 (A).
+    data = r.decode({0x00D2: [5700, 4690, 598, 1075]})
+    assert data["bms_charge_voltage"] == 57.0
+    assert data["bms_discharge_voltage"] == 46.9
+    assert data["bms_charge_current_limit"] == 598
+    assert data["bms_discharge_current_limit"] == 1075
 
 
 def test_work_mode_unknown_value():

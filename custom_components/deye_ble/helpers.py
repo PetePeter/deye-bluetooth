@@ -49,6 +49,29 @@ async def async_poll(transport: Transport, *, with_config: bool = False) -> dict
     return r.decode(words_by_reg)
 
 
+# --- Grid-connection inference ----------------------------------------------
+
+# Nominal grid is ~230 V/phase; off-grid the sensed grid voltage collapses to
+# near zero (the inverter's own output/load voltage stays up, but that is a
+# different register). 100 V cleanly separates "energised" from "collapsed".
+GRID_PRESENT_VOLTAGE = 100.0
+
+_GRID_VOLTAGE_KEYS = ("grid_voltage_l1", "grid_voltage_l2", "grid_voltage_l3")
+
+
+def infer_grid_connected(data: dict[str, Any]) -> bool | None:
+    """Infer grid-connection state from the per-phase grid voltages.
+
+    Returns ``True`` if any phase is energised above ``GRID_PRESENT_VOLTAGE``,
+    ``False`` if all reported phases are below it, and ``None`` if no grid
+    voltage was reported (unknown — never a false "disconnected").
+    """
+    voltages = [data[k] for k in _GRID_VOLTAGE_KEYS if data.get(k) is not None]
+    if not voltages:
+        return None
+    return max(voltages) > GRID_PRESENT_VOLTAGE
+
+
 # --- Logger SN validation ----------------------------------------------------
 
 def validate_logger_sn(sn: str) -> str:
