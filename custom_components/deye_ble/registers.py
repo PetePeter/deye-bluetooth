@@ -37,7 +37,7 @@ READ_BLOCKS: list[tuple[int, int]] = [
 CONTROL_BLOCKS: list[tuple[int, int]] = [
     (0x008E, 2),   # 0x008E work mode, 0x008F max sell power
     (0x0095, 2),   # 0x0095 charge window start, 0x0096 charge window end (HHMM)
-    (0x00A7, 1),   # 0x00A7 charge target SOC (%)
+    (0x00A6, 6),   # 0x00A6..0x00AB TOU slot 1-6 target SOC (%) — charge + discharge
 ]
 
 
@@ -47,7 +47,12 @@ REG_WORK_MODE = 0x008E
 REG_MAX_SELL_POWER = 0x008F
 REG_TOU_SLOT2_START = 0x0095  # charge window start
 REG_TOU_SLOT3_START = 0x0096  # charge window end
-REG_CHARGE_SOC = 0x00A7
+REG_CHARGE_SOC = 0x00A7       # slot 2 target SOC — the charge ceiling
+
+# Discharge floor = the target SOC on every NON-charge slot (1, 3, 4, 5, 6).
+# Slot 2 (0x00A7) is the grid-charge slot and is excluded. Writing the same
+# value to all five makes the inverter hold that SOC whenever it isn't charging.
+DISCHARGE_SOC_REGS = [0x00A6, 0x00A8, 0x00A9, 0x00AA, 0x00AB]
 
 
 # --- Work mode enum ---------------------------------------------------------
@@ -98,7 +103,8 @@ _DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
 
     # Control mirrors (decoded from CONTROL_BLOCKS)
     "max_sell_power":          (0x008F, 1,    False, 0),     # W
-    "charge_soc":              (0x00A7, 1,    False, 0),     # % (TOU charge target)
+    "charge_soc":              (0x00A7, 1,    False, 0),     # % (TOU charge target, slot 2)
+    "discharge_soc":           (0x00A6, 1,    False, 0),     # % (TOU floor, slot 1 representative)
     # work_mode (enum) and charge_start/charge_end (HHMM) handled specially below.
 }
 

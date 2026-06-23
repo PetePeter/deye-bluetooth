@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("homeassistant")
 
 from custom_components.deye_ble import protocol as p
-from custom_components.deye_ble.registers import REG_MAX_SELL_POWER
+from custom_components.deye_ble.registers import DISCHARGE_SOC_REGS, REG_MAX_SELL_POWER
 from tests.test_coordinator import FakeTransport
 from tests.test_registers import FRAMES
 
@@ -61,6 +61,22 @@ class WriteableFakeTransport(FakeTransport):
         return await super().read(address, count)
 
 
+# --- shared helpers ----------------------------------------------------------
+
+def _stub_ble_device(monkeypatch, *, present=True):
+    """Stub the HA bluetooth device lookup used by the write path.
+
+    ``async_ble_device_from_address`` needs a real ``hass``; these tests run
+    without one. Pass ``present=False`` to simulate a missing device.
+    """
+    from custom_components.deye_ble import coordinator as coord_mod
+
+    device = object() if present else None
+    monkeypatch.setattr(
+        coord_mod, "async_ble_device_from_address", lambda _hass, _addr: device
+    )
+
+
 # --- dry-run tests -----------------------------------------------------------
 
 class TestDryRun:
@@ -101,7 +117,7 @@ class TestDryRun:
         assert "dry-run" in caplog.text.lower()
 
     @pytest.mark.asyncio
-    async def test_dry_run_off_calls_write(self):
+    async def test_dry_run_off_calls_write(self, monkeypatch):
         from custom_components.deye_ble.coordinator import DeyeBleCoordinator
 
         transport = WriteableFakeTransport(
@@ -114,13 +130,14 @@ class TestDryRun:
             dry_run=False,
         )
         coordinator._resolve_device = lambda: None
+        _stub_ble_device(monkeypatch)
 
         await coordinator.async_write(REG_MAX_SELL_POWER, 200)
         assert len(transport.writes) == 1
         assert transport.writes[0] == (REG_MAX_SELL_POWER, 200)
 
     @pytest.mark.asyncio
-    async def test_dry_run_off_verifies_readback(self):
+    async def test_dry_run_off_verifies_readback(self, monkeypatch):
         from custom_components.deye_ble.coordinator import DeyeBleCoordinator
 
         transport = WriteableFakeTransport(
@@ -133,12 +150,13 @@ class TestDryRun:
             dry_run=False,
         )
         coordinator._resolve_device = lambda: None
+        _stub_ble_device(monkeypatch)
 
         await coordinator.async_write(REG_MAX_SELL_POWER, 200)
         assert len(transport.writes) == 1
 
     @pytest.mark.asyncio
-    async def test_dry_run_off_readback_mismatch_raises(self):
+    async def test_dry_run_off_readback_mismatch_raises(self, monkeypatch):
         from custom_components.deye_ble.coordinator import DeyeBleCoordinator
 
         transport = WriteableFakeTransport(
@@ -151,9 +169,96 @@ class TestDryRun:
             dry_run=False,
         )
         coordinator._resolve_device = lambda: None
+        _stub_ble_device(monkeypatch)
 
         with pytest.raises(ValueError, match="readback"):
             await coordinator.async_write(REG_MAX_SELL_POWER, 200)
+
+
+# --- async_write_many (discharge SOC multi-slot write) -----------------------
+
+class TestWriteMany:
+    def _coordinator(self, transport, *, dry_run, monkeypatch=None):
+        from custom_components.deye_ble.coordinator import DeyeBleCoordinator
+
+        coordinator = DeyeBleCoordinator(
+            hass=None,
+            address="AA:BB:CC:DD:EE:FF",
+            transport_factory=lambda _dev: transport,
+            dry_run=dry_run,
+        )
+        coordinator._resolve_device = lambda: None
+        # The write path resolves the device via the HA bluetooth helper, which
+        # needs a real hass. Stub it for the non-dry-run tests.
+        if monkeypatch is not None:
+            _stub_ble_device(monkeypatch)
+        return coordinator
+
+    @pytest.mark.asyncio
+    async def test_dry_run_on_writes_nothing_logs_each(self, caplog):
+        transport = WriteableFakeTransport()
+        coordinator = self._coordinator(transport, dry_run=True)
+
+        with caplog.at_level(logging.INFO, logger="custom_components.deye_ble.coordinator"):
+            await coordinator.async_write_many({reg: 20 for reg in DISCHARGE_SOC_REGS})
+
+        assert transport.writes == []
+        for reg in DISCHARGE_SOC_REGS:
+            assert f"0x{reg:04X}" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_dry_run_off_writes_all_and_verifies(self, monkeypatch):
+        transport = WriteableFakeTransport(
+            readback_values={reg: 20 for reg in DISCHARGE_SOC_REGS},
+        )
+        coordinator = self._coordinator(transport, dry_run=False, monkeypatch=monkeypatch)
+
+        await coordinator.async_write_many({reg: 20 for reg in DISCHARGE_SOC_REGS})
+
+        assert transport.writes == [(reg, 20) for reg in DISCHARGE_SOC_REGS]
+
+    @pytest.mark.asyncio
+    async def test_readback_mismatch_on_any_reg_raises(self, monkeypatch):
+        # Third slot reads back wrong -> the whole operation surfaces an error.
+        readback = {reg: 20 for reg in DISCHARGE_SOC_REGS}
+        readback[DISCHARGE_SOC_REGS[2]] = 99
+        transport = WriteableFakeTransport(readback_values=readback)
+        coordinator = self._coordinator(transport, dry_run=False, monkeypatch=monkeypatch)
+
+        with pytest.raises(ValueError, match="readback"):
+            await coordinator.async_write_many({reg: 20 for reg in DISCHARGE_SOC_REGS})
+
+    @pytest.mark.asyncio
+    async def test_all_regs_tracked_for_reassert(self, monkeypatch):
+        transport = WriteableFakeTransport(
+            readback_values={reg: 20 for reg in DISCHARGE_SOC_REGS},
+        )
+        coordinator = self._coordinator(transport, dry_run=False, monkeypatch=monkeypatch)
+
+        await coordinator.async_write_many({reg: 20 for reg in DISCHARGE_SOC_REGS})
+
+        for reg in DISCHARGE_SOC_REGS:
+            assert coordinator._tracked_values[reg] == 20
+
+
+class TestCarryForward:
+    @pytest.mark.asyncio
+    async def test_discharge_soc_carried_forward_across_polls(self):
+        from custom_components.deye_ble.coordinator import DeyeBleCoordinator
+
+        transport = WriteableFakeTransport()
+        coordinator = DeyeBleCoordinator(
+            hass=None,
+            address="AA:BB:CC:DD:EE:FF",
+            transport_factory=lambda _dev: transport,
+        )
+        coordinator._resolve_device = lambda: None
+        # Prior cycle had an optimistic discharge_soc; a telemetry-only poll must
+        # not drop it.
+        coordinator.async_set_updated_data({"discharge_soc": 25})
+
+        data = await coordinator._async_update_data()
+        assert data["discharge_soc"] == 25
 
 
 # --- reassert tests ----------------------------------------------------------
@@ -183,7 +288,7 @@ class TestReassert:
         assert transport.writes == []
 
     @pytest.mark.asyncio
-    async def test_reassert_on_drift_triggers_rewrite(self):
+    async def test_reassert_on_drift_triggers_rewrite(self, monkeypatch):
         """When reassert=True and drift detected, the value is re-applied."""
         from custom_components.deye_ble.coordinator import DeyeBleCoordinator
 
@@ -199,6 +304,7 @@ class TestReassert:
             reassert=True,
         )
         coordinator._resolve_device = lambda: None
+        _stub_ble_device(monkeypatch)  # reassert re-write resolves the device
         # Device reports max_sell=100 but we tracked 200 → drift.
         coordinator._tracked_values = {REG_MAX_SELL_POWER: 200}
 
@@ -234,9 +340,9 @@ class TestReassert:
 
 class TestBLEBusy:
     @pytest.mark.asyncio
-    async def test_write_device_not_found_raises_clear_error(self):
+    async def test_write_device_not_found_raises_clear_error(self, monkeypatch):
         from custom_components.deye_ble.coordinator import DeyeBleCoordinator
-        from homeassistant.helpers.update_coordinator import UpdateFailed
+        from homeassistant.exceptions import HomeAssistantError
 
         coordinator = DeyeBleCoordinator(
             hass=None,
@@ -244,17 +350,13 @@ class TestBLEBusy:
             transport_factory=lambda _dev: WriteableFakeTransport(),
             dry_run=False,
         )
+        _stub_ble_device(monkeypatch, present=False)
 
-        def _not_found():
-            raise UpdateFailed(f"BLE device AA:BB:CC:DD:EE:FF not found")
-
-        coordinator._resolve_device = _not_found
-
-        with pytest.raises(UpdateFailed, match="not found"):
+        with pytest.raises(HomeAssistantError, match="not found"):
             await coordinator.async_write(REG_MAX_SELL_POWER, 200)
 
     @pytest.mark.asyncio
-    async def test_poll_device_not_found_raises_update_failed(self):
+    async def test_poll_device_not_found_raises_update_failed(self, monkeypatch):
         from custom_components.deye_ble.coordinator import DeyeBleCoordinator
         from homeassistant.helpers.update_coordinator import UpdateFailed
 
@@ -263,7 +365,8 @@ class TestBLEBusy:
             address="AA:BB:CC:DD:EE:FF",
             transport_factory=lambda _dev: WriteableFakeTransport(),
         )
-        coordinator._resolve_device = lambda: None
+        # Real _resolve_device runs; the bluetooth lookup returns no device.
+        _stub_ble_device(monkeypatch, present=False)
 
         with pytest.raises(UpdateFailed, match="not found"):
             await coordinator._async_update_data()

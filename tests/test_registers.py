@@ -155,6 +155,20 @@ def test_tou_invalid_hhmm_is_omitted():
     assert "charge_end" not in data
 
 
+def test_discharge_soc_decode_from_widened_slot_block():
+    # Slot SOCs 0x00A6..0x00AB = [6, 100, 6, 6, 6, 6]: slot 2 (0x00A7) is the
+    # charge target (100), every non-charge slot is the discharge floor (6).
+    data = r.decode({0x00A6: [6, 100, 6, 6, 6, 6]})
+    assert data["discharge_soc"] == 6   # 0x00A6, representative non-charge slot
+    assert data["charge_soc"] == 100    # 0x00A7 still decodes from the same block
+
+
+def test_discharge_soc_regs_are_the_non_charge_slots():
+    # The five slots written as the discharge floor — slot 2 (charge) excluded.
+    assert r.DISCHARGE_SOC_REGS == [0x00A6, 0x00A8, 0x00A9, 0x00AA, 0x00AB]
+    assert r.REG_CHARGE_SOC not in r.DISCHARGE_SOC_REGS
+
+
 def test_work_mode_unknown_value():
     assert r.decode({0x008E: [7]})["work_mode"] == "Unknown (7)"
 

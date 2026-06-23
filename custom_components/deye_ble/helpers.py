@@ -67,15 +67,22 @@ def validate_logger_sn(sn: str) -> str:
 
 # --- Control register ↔ entity key mapping --------------------------------
 
-# Bidirectional mapping for the 5 writable control registers.
+# Register -> entity key for every writable control register. The five
+# non-charge TOU slots all map to "discharge_soc" so reassert can re-apply the
+# floor if the cloud/app drifts any of them.
 _REG_TO_KEY: dict[int, str] = {
     r.REG_WORK_MODE: "work_mode",
     r.REG_MAX_SELL_POWER: "max_sell_power",
     r.REG_TOU_SLOT2_START: "charge_start",
     r.REG_TOU_SLOT3_START: "charge_end",
     r.REG_CHARGE_SOC: "charge_soc",
+    **{reg: "discharge_soc" for reg in r.DISCHARGE_SOC_REGS},
 }
-_KEY_TO_REG: dict[str, int] = {v: k for k, v in _REG_TO_KEY.items()}
+# Reverse map for the single-register controls (discharge_soc spans many slots
+# and is written explicitly, so it is intentionally not reversible here).
+_KEY_TO_REG: dict[str, int] = {
+    v: k for k, v in _REG_TO_KEY.items() if v != "discharge_soc"
+}
 
 
 def register_to_key(reg: int) -> str | None:

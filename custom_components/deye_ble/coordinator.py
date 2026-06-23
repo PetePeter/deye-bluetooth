@@ -30,7 +30,7 @@ _LOGGER = logging.getLogger(__name__)
 # exist optimistically (no read-back until P5 adds TOU reads). All are carried
 # forward across polls so an optimistic value isn't dropped on the next cycle.
 _CONFIG_KEYS = ("work_mode", "max_sell_power")
-_CARRY_KEYS = _CONFIG_KEYS + ("charge_soc", "charge_start", "charge_end")
+_CARRY_KEYS = _CONFIG_KEYS + ("charge_soc", "discharge_soc", "charge_start", "charge_end")
 
 
 class DeyeBleCoordinator(DataUpdateCoordinator):
@@ -201,3 +201,33 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         # Track for drift detection.
         self._tracked_values[reg] = value
+
+    async def async_write_many(self, regs: dict[int, int]) -> None:
+        """Write several holding registers in a single BLE session.
+
+        Used where one logical control spans multiple registers (e.g. the
+        discharge floor written to every non-charge TOU slot). Reuses the same
+        safety model as :meth:`async_write` — dry-run gate, per-register
+        read-back verify, and drift tracking — but opens just one connection so
+        five slots don't mean five reconnects on a flaky link.
+        """
+        # Dry-run gate first, identical to async_write — never touch the radio.
+        if self._dry_run:
+            for reg, value in regs.items():
+                _LOGGER.info(
+                    "dry-run: would write reg 0x%04X = %d (no GATT write issued)", reg, value
+                )
+            return
+
+        ble_device = async_ble_device_from_address(self.hass, self._address)
+        if ble_device is None:
+            raise HomeAssistantError(f"BLE device {self._address} not found")
+
+        async with self._ble_lock:
+            async with self._transport_factory(ble_device) as transport:
+                await transport.handshake()
+                for reg, value in regs.items():
+                    await transport.write(reg, value)
+                    readback = await transport.read(reg, 1)
+                    verify_readback(reg, value, readback[0])
+                    self._tracked_values[reg] = value

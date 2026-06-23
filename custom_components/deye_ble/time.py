@@ -46,7 +46,10 @@ class DeyeChargeWindowTime(CoordinatorEntity, TimeEntity):
         super().__init__(coordinator)
         self._which = which
         sn = entry.data[CONF_LOGGER_SN]
-        self._attr_name = f"Grid Charge {'Start' if which == 'start' else 'End'}"
+        # "From"/"To" (not "Start"/"End") so the auto device page sorts the
+        # start time above the end time (F < T alphabetically). unique_id keeps
+        # the charge_start/charge_end slugs, so history is preserved.
+        self._attr_name = f"Grid Charge {'From' if which == 'start' else 'To'}"
         self._attr_unique_id = f"{sn}_charge_{which}"
         self._attr_icon = (
             "mdi:battery-charging" if which == "start"

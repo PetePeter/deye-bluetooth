@@ -35,6 +35,12 @@ class FakeTransport:
         self.handshake_called = False
         self.reads: list[tuple[int, int]] = []
 
+    async def __aenter__(self) -> "FakeTransport":
+        return self
+
+    async def __aexit__(self, *exc) -> bool:
+        return False
+
     async def handshake(self) -> None:
         if self._fail_on_block == -1:
             raise RuntimeError("handshake failed")

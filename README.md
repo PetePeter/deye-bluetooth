@@ -166,17 +166,17 @@ flowchart TD
 | Platform | Entity | Register | Description |
 |----------|--------|----------|-------------|
 | `number` | Max Sell Power | `0x008F` | Grid export power limit (0–15 000 W) |
-| `number` | Charge Target SOC | `0x00A7` | Battery charge cutoff (%) |
+| `number` | Charge Target SOC | `0x00A7` | Battery charge ceiling — slot 2 / charge window (%) |
+| `number` | Discharge SOC | `0x00A6`,`0x00A8`–`0x00AB` | Discharge floor — written to every non-charge TOU slot (%) |
 | `select` | Work Mode | `0x008E` | Selling First / Zero Export to Load / Zero Export to CT |
-| `time` | Grid Charge Start | `0x0095` | Charge window start time |
-| `time` | Grid Charge End | `0x0096` | Charge window end time |
+| `time` | Grid Charge From | `0x0095` | Charge window start time |
+| `time` | Grid Charge To | `0x0096` | Charge window end time |
 
 ### Intentionally not implemented
 
 | Entity | Reason |
 |--------|--------|
 | `binary_sensor.grid_connected` | No verified BLE register for grid-connection state |
-| `discharge_soc` | No verified register for discharge cutoff SOC |
 | Grid voltages L1–L3 | Registers exist (`0x0258`/`0x0273`–`0x0275`) but scaling not confirmed against live values |
 
 ## Protocol
