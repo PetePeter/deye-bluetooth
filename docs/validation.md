@@ -29,7 +29,7 @@ time (or within a few seconds for fast-changing power values).
 | `solar_power` | `sensor.deye_inverter_solar_power` | ±50 W | Fast-changing; sample at same second |
 | `house_load` | `sensor.deye_inverter_house_load` | ±50 W | Fast-changing; sample at same second |
 | `grid_power` | `sensor.deye_inverter_grid_power` | ±50 W | Fast-changing; signed (negative = export) |
-| `battery_power` | `sensor.deye_inverter_battery_power` | ±50 W | Fast-changing; signed (negative = discharge) |
+| `battery_power` | `sensor.deye_inverter_battery_power` | ±50 W | Fast-changing; signed (negative = charging, positive = discharging) |
 | `ups_power` | `sensor.deye_inverter_ups_power` | ±50 W | Fast-changing |
 | `battery_soc` | `sensor.deye_inverter_battery_soc` | **exact** | Slow-changing; should match precisely |
 | `battery_voltage` | `sensor.deye_inverter_battery_voltage` | ±0.5 V | Slow-changing |
