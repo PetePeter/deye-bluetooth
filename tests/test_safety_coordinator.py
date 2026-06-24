@@ -44,15 +44,24 @@ class WriteableFakeTransport(FakeTransport):
         fail_on_block: int | None = None,
         readback_values: dict[int, int] | None = None,
         write_fail: bool = False,
+        write_fail_times: int = 0,
     ):
         super().__init__(frames=frames, fail_on_block=fail_on_block)
         self.writes: list[tuple[int, int]] = []
         self._readback_values = readback_values or {}
         self._write_fail = write_fail
+        # Number of leading write() calls that raise a transient error before the
+        # transport starts succeeding — models a flaky BLE link.
+        self._write_fail_times = write_fail_times
+        self.write_attempts = 0
 
     async def write(self, address: int, value: int) -> None:
+        self.write_attempts += 1
         if self._write_fail:
             raise RuntimeError("write failed")
+        if self._write_fail_times > 0:
+            self._write_fail_times -= 1
+            raise TimeoutError("BLE write timed out")
         self.writes.append((address, value))
 
     async def read(self, address: int, count: int) -> list[int]:
@@ -454,3 +463,108 @@ class TestFailureTolerance:
         # No prior data — nothing to carry forward, so it must surface at once.
         with pytest.raises(UpdateFailed, match="read failed"):
             await coordinator._async_update_data()
+
+
+# --- Write retry on flaky BLE ------------------------------------------------
+
+class TestWriteRetry:
+    """A transient BLE write failure must be retried inside the coordinator, so
+    every caller (UI sliders and automations alike) gets resilience for free.
+    A genuine readback mismatch or a missing device is NOT a transient failure
+    and must surface without burning retries."""
+
+    def _coordinator(self, transport, monkeypatch, *, attempts=3):
+        from custom_components.deye_ble.coordinator import DeyeBleCoordinator
+
+        coordinator = DeyeBleCoordinator(
+            hass=None,
+            address="AA:BB:CC:DD:EE:FF",
+            transport_factory=lambda _dev: transport,
+            dry_run=False,
+            write_attempts=attempts,
+        )
+        coordinator._resolve_device = lambda: None
+        coordinator._write_backoff = 0  # keep tests instant
+        _stub_ble_device(monkeypatch)
+        return coordinator
+
+    @pytest.mark.asyncio
+    async def test_retries_until_success(self, monkeypatch):
+        # Fails the first two write attempts, lands on the third.
+        transport = WriteableFakeTransport(
+            readback_values={REG_MAX_SELL_POWER: 200},
+            write_fail_times=2,
+        )
+        coordinator = self._coordinator(transport, monkeypatch)
+
+        await coordinator.async_write(REG_MAX_SELL_POWER, 200)
+
+        assert transport.write_attempts == 3          # two failures + one success
+        assert transport.writes == [(REG_MAX_SELL_POWER, 200)]
+        assert coordinator._tracked_values[REG_MAX_SELL_POWER] == 200
+
+    @pytest.mark.asyncio
+    async def test_gives_up_after_max_attempts(self, monkeypatch):
+        # Every write attempt times out — surfaces after exhausting the budget.
+        transport = WriteableFakeTransport(
+            readback_values={REG_MAX_SELL_POWER: 200},
+            write_fail_times=99,
+        )
+        coordinator = self._coordinator(transport, monkeypatch, attempts=3)
+
+        with pytest.raises(TimeoutError):
+            await coordinator.async_write(REG_MAX_SELL_POWER, 200)
+
+        assert transport.write_attempts == 3
+
+    @pytest.mark.asyncio
+    async def test_readback_mismatch_not_retried(self, monkeypatch):
+        # The write succeeds but reads back wrong — likely an inverter clamp, not
+        # a flaky link. Fail fast so a retry can't mask it.
+        transport = WriteableFakeTransport(
+            readback_values={REG_MAX_SELL_POWER: 50},
+        )
+        coordinator = self._coordinator(transport, monkeypatch)
+
+        with pytest.raises(ValueError, match="readback"):
+            await coordinator.async_write(REG_MAX_SELL_POWER, 200)
+
+        assert transport.write_attempts == 1
+
+    @pytest.mark.asyncio
+    async def test_device_not_found_not_retried(self, monkeypatch):
+        from homeassistant.exceptions import HomeAssistantError
+
+        transport = WriteableFakeTransport()
+        coordinator = self._coordinator(transport, monkeypatch)
+        _stub_ble_device(monkeypatch, present=False)  # device absent
+
+        with pytest.raises(HomeAssistantError, match="not found"):
+            await coordinator.async_write(REG_MAX_SELL_POWER, 200)
+
+        assert transport.write_attempts == 0
+
+    @pytest.mark.asyncio
+    async def test_write_many_retries_until_success(self, monkeypatch):
+        transport = WriteableFakeTransport(
+            readback_values={reg: 20 for reg in DISCHARGE_SOC_REGS},
+            write_fail_times=2,
+        )
+        coordinator = self._coordinator(transport, monkeypatch)
+
+        await coordinator.async_write_many({reg: 20 for reg in DISCHARGE_SOC_REGS})
+
+        assert transport.writes == [(reg, 20) for reg in DISCHARGE_SOC_REGS]
+        for reg in DISCHARGE_SOC_REGS:
+            assert coordinator._tracked_values[reg] == 20
+
+    @pytest.mark.asyncio
+    async def test_happy_path_single_attempt(self, monkeypatch):
+        transport = WriteableFakeTransport(
+            readback_values={REG_MAX_SELL_POWER: 200},
+        )
+        coordinator = self._coordinator(transport, monkeypatch)
+
+        await coordinator.async_write(REG_MAX_SELL_POWER, 200)
+
+        assert transport.write_attempts == 1

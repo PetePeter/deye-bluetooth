@@ -23,6 +23,14 @@ CONFIG_READ_INTERVAL = 900           # seconds — work_mode + max_sell re-read
 # surfaces once the count is reached.
 MAX_POLL_FAILURES = 10
 
+# BLE writes occasionally time out on a flaky link. Each write is retried up to
+# this many times (the read-back verify confirms it landed) before the failure
+# surfaces to the caller. WRITE_RETRY_BACKOFF is the base inter-attempt delay in
+# seconds, scaled by the attempt number so the link gets progressively longer to
+# settle.
+MAX_WRITE_ATTEMPTS = 3
+WRITE_RETRY_BACKOFF = 2.0
+
 DEVICE_NAME = "Deye Inverter (BLE)"  # coexistence with deyecloud "Deye Inverter"
 
 # Re-export for convenience

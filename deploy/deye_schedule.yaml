@@ -1,0 +1,123 @@
+# Deye — Sell Power Schedule
+# ==========================
+# Always-sell strategy with separate idle / peak export caps.
+#   - Outside 18:00–21:00: sell at the idle cap.
+#   - 18:00–21:00:          sell at the peak cap.
+# A cap of 0 means "don't sell" — the inverter is put into Zero Export to CT
+# rather than Selling First, so it neither exports nor drains the battery.
+# The two input_numbers below are user-facing: set them in the UI to taste.
+
+input_number:
+  deye_idle_sell_power:
+    name: Deye Idle Sell Power
+    min: 0
+    max: 15000
+    step: 10
+    unit_of_measurement: W
+    mode: box
+    icon: mdi:transmission-tower-export
+  deye_peak_sell_power:
+    name: Deye Peak Sell Power
+    min: 0
+    max: 15000
+    step: 10
+    unit_of_measurement: W
+    mode: box
+    icon: mdi:transmission-tower-export
+  # Lower peak cap used while calibrating: keeps SoC high enough to push the
+  # pack into absorption and finish a true full charge.
+  deye_peak_sell_power_calibration:
+    name: Deye Peak Sell Power (Calibration)
+    min: 0
+    max: 15000
+    step: 10
+    initial: 2000
+    unit_of_measurement: W
+    mode: box
+    icon: mdi:transmission-tower-export
+
+automation:
+  # Applies the right export cap (and work mode) for the current time window.
+  # Re-runs on the window boundaries, on HA start, and whenever either cap
+  # slider changes — so UI edits take effect immediately.
+  #
+  # BLE writes to the inverter occasionally time out. Resilience lives in the
+  # integration: every write retries and read-back-verifies before it reports
+  # success, so this automation just issues the writes once. continue_on_error
+  # lets us reach the verify step even if a write ultimately fails; if the
+  # inverter still didn't take the target, Oscar's phone is notified — only his.
+  - id: deye_sell_power_schedule
+    alias: "Battery — Sell Power Schedule"
+    mode: single
+    max_exceeded: silent
+    trigger:
+      - platform: time
+        at: "18:00:00"
+      - platform: time
+        at: "21:00:00"
+      - platform: homeassistant
+        event: start
+      - platform: state
+        entity_id:
+          - input_number.deye_idle_sell_power
+          - input_number.deye_peak_sell_power
+          - input_number.deye_peak_sell_power_calibration
+          - input_boolean.battery_needs_calibration
+    action:
+      - variables:
+          in_peak: "{{ today_at('18:00') <= now() < today_at('21:00') }}"
+          calibrating: "{{ is_state('input_boolean.battery_needs_calibration', 'on') }}"
+          # Peak window uses the calibration cap when the flag is set; otherwise
+          # the normal peak cap. Outside the window, always the idle cap.
+          # Single expression so the result coerces cleanly to int.
+          target_power: >
+            {{ ((states('input_number.deye_peak_sell_power_calibration') if calibrating
+                 else states('input_number.deye_peak_sell_power')) if in_peak
+                else states('input_number.deye_idle_sell_power')) | int(0) }}
+          # 0 W → don't sell (Zero Export to CT); otherwise sell (Selling First).
+          desired_mode: "{{ 'Zero Export to CT' if target_power == 0 else 'Selling First' }}"
+
+      # --- Work mode: write only when it differs (integration retries) --------
+      - if:
+          - condition: template
+            value_template: "{{ states('select.deye_inverter_ble_work_mode') != desired_mode }}"
+        then:
+          - action: select.select_option
+            continue_on_error: true
+            target:
+              entity_id: select.deye_inverter_ble_work_mode
+            data:
+              option: "{{ desired_mode }}"
+          # Let the inverter settle before the next command.
+          - delay: "00:00:15"
+
+      # --- Sell power (integration retries) -----------------------------------
+      - if:
+          - condition: template
+            value_template: "{{ target_power > 0 }}"
+        then:
+          - action: number.set_value
+            continue_on_error: true
+            target:
+              entity_id: number.deye_inverter_ble_max_sell_power
+            data:
+              value: "{{ target_power }}"
+
+      # --- Verify both writes landed; alert Oscar only if not -----------------
+      - variables:
+          mode_ok: "{{ is_state('select.deye_inverter_ble_work_mode', desired_mode) }}"
+          power_ok: >
+            {{ target_power == 0
+               or states('number.deye_inverter_ble_max_sell_power') | int(-1) == target_power }}
+      - if:
+          - condition: template
+            value_template: "{{ not (mode_ok and power_ok) }}"
+        then:
+          - action: notify.mobile_app_phone_oscar
+            data:
+              title: "⚠️ Deye sell schedule failed"
+              message: >
+                BLE writes didn't apply after 3 tries.
+                Target: {{ target_power }} W / {{ desired_mode }}.
+                Now: {{ states('number.deye_inverter_ble_max_sell_power') }} W /
+                {{ states('select.deye_inverter_ble_work_mode') }}.

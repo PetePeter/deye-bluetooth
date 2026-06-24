@@ -21,6 +21,8 @@ from .const import (
     DEFAULT_REASSERT,
     DOMAIN,
     MAX_POLL_FAILURES,
+    MAX_WRITE_ATTEMPTS,
+    WRITE_RETRY_BACKOFF,
 )
 from .helpers import async_poll, detect_drift, verify_readback
 
@@ -51,6 +53,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         dry_run: bool = DEFAULT_DRY_RUN,
         reassert: bool = DEFAULT_REASSERT,
         max_failures: int = MAX_POLL_FAILURES,
+        write_attempts: int = MAX_WRITE_ATTEMPTS,
     ) -> None:
         super().__init__(
             hass,
@@ -66,6 +69,8 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         self._dry_run = dry_run
         self._reassert = reassert
         self._max_failures = max_failures
+        self._write_attempts = max(1, write_attempts)
+        self._write_backoff = WRITE_RETRY_BACKOFF
         self._consecutive_failures = 0
         self._tracked_values: dict[int, int | str] = {}
         # The logger accepts ONE BLE central at a time, so polls and writes must
@@ -175,32 +180,10 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Opens a fresh transport session and handshakes before writing.
         When dry-run is ON, logs intent and returns without issuing a GATT write.
         When dry-run is OFF, writes, reads back, and verifies the value.
-        Tracks the value for optional drift detection (reassert).
+        Transient BLE failures are retried (see :meth:`_write_regs`); the value
+        is tracked for optional drift detection (reassert) once it lands.
         """
-        # Dry-run is the safety default: never touch the radio, just log intent.
-        # Checked first so it works even when the device is momentarily absent.
-        if self._dry_run:
-            _LOGGER.info(
-                "dry-run: would write reg 0x%04X = %d (no GATT write issued)", reg, value
-            )
-            return
-
-        ble_device = async_ble_device_from_address(self.hass, self._address)
-        if ble_device is None:
-            raise HomeAssistantError(f"BLE device {self._address} not found")
-
-        # Serialize against the poll — one BLE central at a time on the logger.
-        async with self._ble_lock:
-            async with self._transport_factory(ble_device) as transport:
-                await transport.handshake()
-                await transport.write(reg, value)
-                # Read back to confirm.
-                readback = await transport.read(reg, 1)
-                actual = readback[0]
-                verify_readback(reg, value, actual)
-
-        # Track for drift detection.
-        self._tracked_values[reg] = value
+        await self._write_regs({reg: value})
 
     async def async_write_many(self, regs: dict[int, int]) -> None:
         """Write several holding registers in a single BLE session.
@@ -208,10 +191,23 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Used where one logical control spans multiple registers (e.g. the
         discharge floor written to every non-charge TOU slot). Reuses the same
         safety model as :meth:`async_write` — dry-run gate, per-register
-        read-back verify, and drift tracking — but opens just one connection so
-        five slots don't mean five reconnects on a flaky link.
+        read-back verify, retry, and drift tracking — but opens just one
+        connection so five slots don't mean five reconnects on a flaky link.
         """
-        # Dry-run gate first, identical to async_write — never touch the radio.
+        await self._write_regs(regs)
+
+    async def _write_regs(self, regs: dict[int, int]) -> None:
+        """Write one or more registers over BLE, retrying transient failures.
+
+        A flaky link can drop a connection or time out mid-write; each attempt
+        opens a fresh session and re-issues every register, confirming with a
+        read-back. A *readback mismatch* (the inverter clamped/rejected the
+        value) and a *missing device* are not transient — they surface at once
+        rather than burning the retry budget. The value is tracked for drift
+        detection only after the whole batch has verified.
+        """
+        # Dry-run is the safety default: never touch the radio, just log intent.
+        # Checked first so it works even when the device is momentarily absent.
         if self._dry_run:
             for reg, value in regs.items():
                 _LOGGER.info(
@@ -223,11 +219,33 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         if ble_device is None:
             raise HomeAssistantError(f"BLE device {self._address} not found")
 
-        async with self._ble_lock:
-            async with self._transport_factory(ble_device) as transport:
-                await transport.handshake()
-                for reg, value in regs.items():
-                    await transport.write(reg, value)
-                    readback = await transport.read(reg, 1)
-                    verify_readback(reg, value, readback[0])
-                    self._tracked_values[reg] = value
+        for attempt in range(1, self._write_attempts + 1):
+            try:
+                # Serialize against the poll — one BLE central at a time.
+                async with self._ble_lock:
+                    async with self._transport_factory(ble_device) as transport:
+                        await transport.handshake()
+                        for reg, value in regs.items():
+                            await transport.write(reg, value)
+                            readback = await transport.read(reg, 1)
+                            verify_readback(reg, value, readback[0])
+                break
+            except ValueError:
+                # Read-back mismatch — a retry would only mask an inverter clamp.
+                raise
+            except Exception as exc:
+                if attempt >= self._write_attempts:
+                    _LOGGER.warning(
+                        "BLE write failed after %d attempt(s): %s", attempt, exc
+                    )
+                    raise
+                _LOGGER.info(
+                    "BLE write attempt %d/%d failed, retrying: %s",
+                    attempt, self._write_attempts, exc,
+                )
+                if self._write_backoff:
+                    await asyncio.sleep(self._write_backoff * attempt)
+
+        # Track for drift detection only once the batch has fully verified.
+        for reg, value in regs.items():
+            self._tracked_values[reg] = value
