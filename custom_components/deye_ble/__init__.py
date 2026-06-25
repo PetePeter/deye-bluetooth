@@ -62,6 +62,20 @@ async def async_setup_entry(hass, entry) -> bool:
 
     entry.async_on_unload(entry.add_update_listener(_on_options_update))
 
+    async def _dump_registers_service(call):
+        """Diagnostic: sweep registers to /config/deye_register_dump.txt."""
+        start = int(call.data.get("start", 0x0000))
+        end = int(call.data.get("end", 0x0300))
+        block = int(call.data.get("block", 16))
+        text = await coordinator.async_dump_registers(start, end, block)
+        path = hass.config.path("deye_register_dump.txt")
+        await hass.async_add_executor_job(
+            lambda: open(path, "w", encoding="utf-8").write(text)
+        )
+        _LOGGER.warning("Register dump written to %s (%d lines)", path, text.count("\n") + 1)
+
+    hass.services.async_register(DOMAIN, "dump_registers", _dump_registers_service)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 

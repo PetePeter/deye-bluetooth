@@ -196,6 +196,36 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         """
         await self._write_regs(regs)
 
+    async def async_dump_registers(
+        self, start: int, end: int, block: int = 16
+    ) -> str:
+        """Sweep holding registers [start, end) and return a reg=value text dump.
+
+        Diagnostic only: read-only, blocks that the inverter rejects are noted
+        and skipped rather than aborting the sweep. Serialized against the poll
+        via the BLE lock (one central at a time). 100-reg reads get no BLE reply,
+        so the default block size matches the small-read limit.
+        """
+        ble_device = async_ble_device_from_address(self.hass, self._address)
+        if ble_device is None:
+            raise HomeAssistantError(f"BLE device {self._address} not found")
+
+        lines: list[str] = []
+        async with self._ble_lock:
+            async with self._transport_factory(ble_device) as transport:
+                await transport.handshake()
+                addr = start
+                while addr < end:
+                    count = min(block, end - addr)
+                    try:
+                        words = await transport.read(addr, count)
+                        for i, w in enumerate(words):
+                            lines.append(f"0x{addr + i:04X} {w}")
+                    except Exception as exc:  # noqa: BLE001 — diagnostic, keep going
+                        lines.append(f"# block 0x{addr:04X}+{count} failed: {exc}")
+                    addr += count
+        return "\n".join(lines)
+
     async def _write_regs(self, regs: dict[int, int]) -> None:
         """Write one or more registers over BLE, retrying transient failures.
 
