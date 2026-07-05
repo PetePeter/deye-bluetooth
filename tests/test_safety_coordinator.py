@@ -269,6 +269,32 @@ class TestCarryForward:
         data = await coordinator._async_update_data()
         assert data["discharge_soc"] == 25
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("key,value", [
+        ("max_charge_current", 210),
+        ("max_discharge_current", 200),
+        ("batt_shutdown_soc", 4),
+        ("batt_low_soc", 5),
+        ("batt_restart_soc", 6),
+    ])
+    async def test_control_value_carried_forward_across_polls(self, key, value):
+        # These control mirrors are only read on the slow config cycle. A
+        # telemetry-only poll must carry them forward, or the number entity
+        # blanks between config reads.
+        from custom_components.deye_ble.coordinator import DeyeBleCoordinator
+
+        transport = WriteableFakeTransport()
+        coordinator = DeyeBleCoordinator(
+            hass=None,
+            address="AA:BB:CC:DD:EE:FF",
+            transport_factory=lambda _dev: transport,
+        )
+        coordinator._resolve_device = lambda: None
+        coordinator.async_set_updated_data({key: value})
+
+        data = await coordinator._async_update_data()
+        assert data[key] == value
+
 
 # --- reassert tests ----------------------------------------------------------
 

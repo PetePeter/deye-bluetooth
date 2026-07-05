@@ -30,9 +30,14 @@ _LOGGER = logging.getLogger(__name__)
 
 # Keys read on the slower config cycle, plus the write-only controls that only
 # exist optimistically (no read-back until P5 adds TOU reads). All are carried
-# forward across polls so an optimistic value isn't dropped on the next cycle.
+# forward across polls so a config value isn't dropped (blanking its entity) on
+# the telemetry-only cycles between config reads.
 _CONFIG_KEYS = ("work_mode", "max_sell_power")
-_CARRY_KEYS = _CONFIG_KEYS + ("charge_soc", "discharge_soc", "charge_start", "charge_end")
+_CARRY_KEYS = _CONFIG_KEYS + (
+    "charge_soc", "discharge_soc", "charge_start", "charge_end",
+    "max_charge_current", "max_discharge_current",
+    "batt_shutdown_soc", "batt_low_soc", "batt_restart_soc",
+)
 
 
 class DeyeBleCoordinator(DataUpdateCoordinator):
