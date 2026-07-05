@@ -132,6 +132,48 @@ def test_max_sell_power_from_real_single_register_frame():
     assert data["max_sell_power"] == 100
 
 
+def test_max_charge_discharge_current_decode():
+    # Registers 0x006C/0x006D, confirmed by a live MITM capture of the Deye app
+    # writing these values (raw = amps, no scaling). Guards the reverse-engineered
+    # addresses: a wrong address here would write garbage to a live inverter.
+    data = r.decode({0x006C: [210, 200]})  # 0x006C charge, 0x006D discharge
+    assert data["max_charge_current"] == 210
+    assert data["max_discharge_current"] == 200
+    assert r.REG_MAX_CHARGE_CURRENT == 0x006C
+    assert r.REG_MAX_DISCHARGE_CURRENT == 0x006D
+
+
+def test_max_charge_current_block_is_polled():
+    # The current setpoints must be in a CONTROL_BLOCKS read so native_value reflects
+    # the live value; 0x006C..0x006D must fall inside one polled block.
+    assert any(
+        start <= 0x006C and 0x006D < start + count
+        for start, count in r.CONTROL_BLOCKS
+    )
+
+
+def test_battery_soc_threshold_and_lithium_mode_decode():
+    # 0x0071 lithium mode, 0x0073 shutdown, 0x0074 restart, 0x0075 low — confirmed by
+    # a live MITM capture of the Deye app (shutdown 4, low 5, restart 6, lithium 12).
+    data = r.decode({0x0071: [12, 0, 4, 6, 5]})  # 0x0071..0x0075
+    assert data["lithium_mode"] == 12
+    assert data["batt_shutdown_soc"] == 4
+    assert data["batt_restart_soc"] == 6
+    assert data["batt_low_soc"] == 5
+    assert r.REG_LITHIUM_MODE == 0x0071
+    assert r.REG_BATT_SHUTDOWN_SOC == 0x0073
+    assert r.REG_BATT_RESTART_SOC == 0x0074
+    assert r.REG_BATT_LOW_SOC == 0x0075
+
+
+def test_battery_threshold_block_is_polled():
+    # Lithium mode + the three SOC thresholds must be inside one polled block.
+    for reg in (0x0071, 0x0073, 0x0074, 0x0075):
+        assert any(
+            start <= reg < start + count for start, count in r.CONTROL_BLOCKS
+        ), f"0x{reg:04X} not polled"
+
+
 @pytest.mark.parametrize("raw,label", [
     (0, "Selling First"),
     (1, "Zero Export to Load"),
