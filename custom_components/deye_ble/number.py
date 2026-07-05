@@ -17,7 +17,6 @@ from .registers import (
     REG_BATT_RESTART_SOC,
     REG_BATT_SHUTDOWN_SOC,
     REG_CHARGE_SOC,
-    REG_LITHIUM_MODE,
     REG_MAX_CHARGE_CURRENT,
     REG_MAX_DISCHARGE_CURRENT,
     REG_MAX_SELL_POWER,
@@ -40,7 +39,6 @@ async def async_setup_entry(
         DeyeBattShutdownSoc(coordinator, entry, sn),
         DeyeBattLowSoc(coordinator, entry, sn),
         DeyeBattRestartSoc(coordinator, entry, sn),
-        DeyeLithiumMode(coordinator, entry, sn),
     ])
 
 
@@ -214,22 +212,5 @@ class DeyeBattRestartSoc(_SingleRegisterNumber):
     _attr_native_unit_of_measurement = "%"
     _attr_native_min_value = 0
     _attr_native_max_value = 100
-    _attr_native_step = 1
-    _attr_mode = NumberMode.BOX
-
-
-class DeyeLithiumMode(_SingleRegisterNumber):
-    """Battery (BMS) protocol / lithium-mode index. Reg 0x0071.
-
-    A raw index (matches the Deye app's "Lithium Mode" field). Kept as a plain
-    numeric box because the protocol-number→BMS-vendor mapping is model-specific.
-    """
-
-    _register = REG_LITHIUM_MODE
-    _data_key = "lithium_mode"
-    _attr_name = "Lithium Mode"
-    _attr_icon = "mdi:battery-sync"
-    _attr_native_min_value = 0
-    _attr_native_max_value = 99
     _attr_native_step = 1
     _attr_mode = NumberMode.BOX

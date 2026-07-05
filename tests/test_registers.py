@@ -152,23 +152,21 @@ def test_max_charge_current_block_is_polled():
     )
 
 
-def test_battery_soc_threshold_and_lithium_mode_decode():
-    # 0x0071 lithium mode, 0x0073 shutdown, 0x0074 restart, 0x0075 low — confirmed by
-    # a live MITM capture of the Deye app (shutdown 4, low 5, restart 6, lithium 12).
-    data = r.decode({0x0071: [12, 0, 4, 6, 5]})  # 0x0071..0x0075
-    assert data["lithium_mode"] == 12
+def test_battery_soc_threshold_decode():
+    # 0x0073 shutdown, 0x0074 restart, 0x0075 low — confirmed by a live MITM capture
+    # of the Deye app (shutdown 4, restart 6, low 5).
+    data = r.decode({0x0073: [4, 6, 5]})  # 0x0073..0x0075
     assert data["batt_shutdown_soc"] == 4
     assert data["batt_restart_soc"] == 6
     assert data["batt_low_soc"] == 5
-    assert r.REG_LITHIUM_MODE == 0x0071
     assert r.REG_BATT_SHUTDOWN_SOC == 0x0073
     assert r.REG_BATT_RESTART_SOC == 0x0074
     assert r.REG_BATT_LOW_SOC == 0x0075
 
 
 def test_battery_threshold_block_is_polled():
-    # Lithium mode + the three SOC thresholds must be inside one polled block.
-    for reg in (0x0071, 0x0073, 0x0074, 0x0075):
+    # The three SOC thresholds must be inside one polled block.
+    for reg in (0x0073, 0x0074, 0x0075):
         assert any(
             start <= reg < start + count for start, count in r.CONTROL_BLOCKS
         ), f"0x{reg:04X} not polled"

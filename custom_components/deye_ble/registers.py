@@ -37,7 +37,7 @@ READ_BLOCKS: list[tuple[int, int]] = [
 # Control registers, read on the slower config cycle (P3).
 CONTROL_BLOCKS: list[tuple[int, int]] = [
     (0x006C, 2),   # 0x006C max charge current, 0x006D max discharge current (A)
-    (0x0071, 5),   # 0x0071 lithium mode; 0x0073/0x0074/0x0075 batt shutdown/restart/low SOC (%)
+    (0x0073, 3),   # 0x0073/0x0074/0x0075 batt shutdown/restart/low SOC (%)
     (0x008E, 2),   # 0x008E work mode, 0x008F max sell power
     (0x0095, 2),   # 0x0095 charge window start, 0x0096 charge window end (HHMM)
     (0x00A6, 6),   # 0x00A6..0x00AB TOU slot 1-6 target SOC (%) — charge + discharge
@@ -46,7 +46,6 @@ CONTROL_BLOCKS: list[tuple[int, int]] = [
 
 # --- Control register addresses ---------------------------------------------
 
-REG_LITHIUM_MODE = 0x0071           # battery (BMS) protocol / lithium mode index
 REG_MAX_CHARGE_CURRENT = 0x006C     # battery max charge current (A)
 REG_MAX_DISCHARGE_CURRENT = 0x006D  # battery max discharge current (A)
 REG_BATT_SHUTDOWN_SOC = 0x0073      # battery shutdown SOC (%)
@@ -126,7 +125,6 @@ _DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
     # Control mirrors (decoded from CONTROL_BLOCKS)
     "max_charge_current":      (0x006C, 1,    False, 0),     # A (battery charge current limit)
     "max_discharge_current":   (0x006D, 1,    False, 0),     # A (battery discharge current limit)
-    "lithium_mode":            (0x0071, 1,    False, 0),     # BMS protocol / lithium mode index
     "batt_shutdown_soc":       (0x0073, 1,    False, 0),     # % (battery shutdown floor)
     "batt_restart_soc":        (0x0074, 1,    False, 0),     # % (battery restart threshold)
     "batt_low_soc":            (0x0075, 1,    False, 0),     # % (battery low-warning threshold)
