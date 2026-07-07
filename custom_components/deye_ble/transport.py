@@ -13,6 +13,7 @@ import asyncio
 import logging
 
 from bleak import BleakClient
+from bleak_retry_connector import establish_connection
 
 from . import protocol as p
 
@@ -22,6 +23,7 @@ WRITE_CHAR = "0000fec7-0000-1000-8000-00805f9b34fb"   # write-with-response
 NOTIFY_CHAR = "0000fed8-0000-1000-8000-00805f9b34fb"  # notify (CCCD enabled by bleak)
 
 DEFAULT_TIMEOUT = 10.0  # seconds to await a notification reply
+CONNECT_ATTEMPTS = 3    # establish_connection retries transient proxy failures
 
 
 class DeyeBleError(Exception):
@@ -40,6 +42,10 @@ class DeyeBleTransport:
 
     def __init__(self, ble_device, timeout: float = DEFAULT_TIMEOUT):
         self._device = ble_device
+        # For establish_connection logging; BLEDevice exposes name/address.
+        self._name = getattr(ble_device, "name", None) or getattr(
+            ble_device, "address", "deye"
+        )
         self._timeout = timeout
         self._client: BleakClient | None = None
         self._reply: asyncio.Future[str] | None = None
@@ -54,8 +60,15 @@ class DeyeBleTransport:
 
     async def connect(self) -> None:
         self._loop = asyncio.get_running_loop()
-        self._client = BleakClient(self._device)
-        await self._client.connect()
+        # Use bleak-retry-connector — the resilient path HA expects. It routes
+        # through the ESP32 proxies, retries transient failures, and handles the
+        # reconnect churn that raw BleakClient.connect() does not.
+        self._client = await establish_connection(
+            BleakClient,
+            self._device,
+            self._name,
+            max_attempts=CONNECT_ATTEMPTS,
+        )
         await self._client.start_notify(NOTIFY_CHAR, self._on_notify)
 
     async def disconnect(self) -> None:
