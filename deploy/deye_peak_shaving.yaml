@@ -1,0 +1,101 @@
+# Deye — Grid/Gen Peak Shaving Schedule
+# =====================================
+# Enables grid AND generator peak-shaving daily from 11:00 to 14:00, and
+# disables both outside that window. Peak-shaving caps the power the inverter
+# will pull from the grid (and generator); once the grid import hits that cap,
+# the inverter can no longer use grid power to charge the battery, so charging
+# may slow. The second automation warns Oscar when that limit is actually hit.
+#
+# The enable state lives in the packed 0x00B2 flag register; the integration's
+# Grid/Gen Peak Shaving switches read-modify-write it, so toggling one never
+# disturbs the other function bits. The W caps are set independently via the
+# Grid/Gen Peak Shave Power numbers and are left untouched here — edit them in
+# the UI and the integration pushes the change through on the spot.
+#
+# Like the sell schedule, BLE write resilience lives in the integration (each
+# write retries + read-back-verifies), so these automations issue writes once
+# with continue_on_error, then verify and notify Oscar only if it didn't land.
+
+automation:
+  # --- Window: on at 11:00, off at 14:00 (and reassert on HA start) ----------
+  - id: deye_peak_shaving_window
+    alias: "Battery — Grid/Gen Peak Shaving Window"
+    mode: single
+    max_exceeded: silent
+    trigger:
+      - platform: time
+        at: "11:00:00"
+      - platform: time
+        at: "14:00:00"
+      - platform: homeassistant
+        event: start
+    action:
+      - variables:
+          in_window: "{{ today_at('11:00') <= now() < today_at('14:00') }}"
+          desired: "{{ 'on' if in_window else 'off' }}"
+
+      # Templated service resolves to switch.turn_on / switch.turn_off.
+      - action: "switch.turn_{{ desired }}"
+        continue_on_error: true
+        target:
+          entity_id:
+            - switch.deye_inverter_ble_grid_peak_shaving
+            - switch.deye_inverter_ble_gen_peak_shaving
+
+      # Let the inverter apply both bit writes before we read them back.
+      - delay: "00:00:15"
+
+      # --- Verify both toggles landed; alert Oscar only if not ---------------
+      - variables:
+          grid_ok: "{{ is_state('switch.deye_inverter_ble_grid_peak_shaving', desired) }}"
+          gen_ok: "{{ is_state('switch.deye_inverter_ble_gen_peak_shaving', desired) }}"
+      - if:
+          - condition: template
+            value_template: "{{ not (grid_ok and gen_ok) }}"
+        then:
+          - action: notify.mobile_app_phone_oscar
+            data:
+              title: "⚠️ Deye peak-shaving toggle failed"
+              message: >
+                Wanted grid+gen peak shaving {{ desired }} after 3 BLE tries.
+                Now grid={{ states('switch.deye_inverter_ble_grid_peak_shaving') }},
+                gen={{ states('switch.deye_inverter_ble_gen_peak_shaving') }}.
+
+  # --- Alert when grid import actually reaches the grid peak-shave cap --------
+  # grid_power is signed: positive = importing from the grid. When import climbs
+  # to (near) the grid peak-shave cap, the inverter is limiting grid draw and can
+  # no longer lean on the grid to charge the battery.
+  - id: deye_peak_shaving_grid_limit
+    alias: "Battery — Grid Import Hit Peak-Shave Cap"
+    mode: single
+    max_exceeded: silent
+    trigger:
+      - platform: template
+        # Fire once grid import sits within 2% of the cap for a full minute
+        # (the sustained hold avoids a notification on a momentary spike).
+        value_template: >
+          {{ is_state('switch.deye_inverter_ble_grid_peak_shaving', 'on')
+             and states('sensor.deye_inverter_ble_grid_power') | int(0)
+                 >= (states('number.deye_inverter_ble_grid_peak_shave_power') | int(999999) * 0.98) }}
+        for: "00:01:00"
+    condition:
+      # Only during the shaving window — belt-and-braces with the switch state.
+      - condition: time
+        after: "11:00:00"
+        before: "14:00:00"
+    action:
+      - action: persistent_notification.create
+        data:
+          notification_id: deye_grid_peak_shave_limit
+          title: "🔌 Grid import at peak-shave limit"
+          message: >
+            Grid import ({{ states('sensor.deye_inverter_ble_grid_power') }} W) has reached the
+            grid peak-shave cap ({{ states('number.deye_inverter_ble_grid_peak_shave_power') }} W).
+            Battery charge may be reduced because of grid import limits.
+      - action: notify.mobile_app_phone_oscar
+        data:
+          title: "🔌 Grid import at peak-shave limit"
+          message: >
+            Grid import ({{ states('sensor.deye_inverter_ble_grid_power') }} W) reached the peak-shave
+            cap ({{ states('number.deye_inverter_ble_grid_peak_shave_power') }} W).
+            Battery charge may be reduced because of grid import limits.

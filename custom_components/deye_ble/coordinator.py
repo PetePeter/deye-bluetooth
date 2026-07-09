@@ -37,6 +37,8 @@ _CARRY_KEYS = _CONFIG_KEYS + (
     "charge_soc", "discharge_soc", "charge_start", "charge_end",
     "max_charge_current", "max_discharge_current",
     "batt_shutdown_soc", "batt_low_soc", "batt_restart_soc",
+    "peak_shaving_flags_raw", "grid_peak_shaving", "gen_peak_shaving",
+    "gen_peak_power", "grid_peak_power",
 )
 
 

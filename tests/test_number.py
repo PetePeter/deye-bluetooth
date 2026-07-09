@@ -15,6 +15,8 @@ from custom_components.deye_ble.number import (
     DeyeBattRestartSoc,
     DeyeBattShutdownSoc,
     DeyeDischargeSoc,
+    DeyeGenPeakPower,
+    DeyeGridPeakPower,
     DeyeMaxChargeCurrent,
     DeyeMaxDischargeCurrent,
 )
@@ -23,6 +25,8 @@ from custom_components.deye_ble.registers import (
     REG_BATT_LOW_SOC,
     REG_BATT_RESTART_SOC,
     REG_BATT_SHUTDOWN_SOC,
+    REG_GEN_PEAK_POWER,
+    REG_GRID_PEAK_POWER,
     REG_MAX_CHARGE_CURRENT,
     REG_MAX_DISCHARGE_CURRENT,
 )
@@ -94,6 +98,9 @@ async def test_max_discharge_current_writes_to_register_0x006d():
     (DeyeBattShutdownSoc, REG_BATT_SHUTDOWN_SOC, "batt_shutdown_soc", 4),
     (DeyeBattLowSoc, REG_BATT_LOW_SOC, "batt_low_soc", 5),
     (DeyeBattRestartSoc, REG_BATT_RESTART_SOC, "batt_restart_soc", 6),
+    # Peak-shave caps stay editable and write through on every change.
+    (DeyeGridPeakPower, REG_GRID_PEAK_POWER, "grid_peak_power", 16500),
+    (DeyeGenPeakPower, REG_GEN_PEAK_POWER, "gen_peak_power", 8000),
 ])
 @pytest.mark.asyncio
 async def test_single_register_number_writes_to_expected_register(

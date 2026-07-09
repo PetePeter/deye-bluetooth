@@ -17,6 +17,8 @@ from .registers import (
     REG_BATT_RESTART_SOC,
     REG_BATT_SHUTDOWN_SOC,
     REG_CHARGE_SOC,
+    REG_GEN_PEAK_POWER,
+    REG_GRID_PEAK_POWER,
     REG_MAX_CHARGE_CURRENT,
     REG_MAX_DISCHARGE_CURRENT,
     REG_MAX_SELL_POWER,
@@ -39,6 +41,8 @@ async def async_setup_entry(
         DeyeBattShutdownSoc(coordinator, entry, sn),
         DeyeBattLowSoc(coordinator, entry, sn),
         DeyeBattRestartSoc(coordinator, entry, sn),
+        DeyeGridPeakPower(coordinator, entry, sn),
+        DeyeGenPeakPower(coordinator, entry, sn),
     ])
 
 
@@ -214,3 +218,35 @@ class DeyeBattRestartSoc(_SingleRegisterNumber):
     _attr_native_max_value = 100
     _attr_native_step = 1
     _attr_mode = NumberMode.BOX
+
+
+class DeyeGridPeakPower(_SingleRegisterNumber):
+    """Grid peak-shaving power cap (W) — max grid import while grid shaving is on.
+    Reg 0x00BF. The enable bit lives in 0x00B2 (see the Grid Peak Shaving switch)."""
+
+    _register = REG_GRID_PEAK_POWER
+    _data_key = "grid_peak_power"
+    _attr_name = "Grid Peak Shave Power"
+    _attr_icon = "mdi:transmission-tower"
+    _attr_native_unit_of_measurement = "W"
+    _attr_native_min_value = 0
+    _attr_native_max_value = 30000
+    _attr_native_step = 100
+    _attr_mode = NumberMode.BOX
+    _attr_device_class = NumberDeviceClass.POWER
+
+
+class DeyeGenPeakPower(_SingleRegisterNumber):
+    """Generator peak-shaving power cap (W). Reg 0x00BE. Enable bit in 0x00B2
+    (see the Gen Peak Shaving switch)."""
+
+    _register = REG_GEN_PEAK_POWER
+    _data_key = "gen_peak_power"
+    _attr_name = "Gen Peak Shave Power"
+    _attr_icon = "mdi:engine"
+    _attr_native_unit_of_measurement = "W"
+    _attr_native_min_value = 0
+    _attr_native_max_value = 30000
+    _attr_native_step = 100
+    _attr_mode = NumberMode.BOX
+    _attr_device_class = NumberDeviceClass.POWER

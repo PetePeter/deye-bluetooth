@@ -185,7 +185,11 @@ flowchart TD
 | `number` | Max Sell Power | `0x008F` | Grid export power limit (0–15 000 W) |
 | `number` | Charge Target SOC | `0x00A7` | Battery charge ceiling — slot 2 / charge window (%) |
 | `number` | Discharge SOC | `0x00A6`,`0x00A8`–`0x00AB` | Discharge floor — written to every non-charge TOU slot (%) |
+| `number` | Grid Peak Shave Power | `0x00BF` | Max grid import while grid peak shaving is on (W) |
+| `number` | Gen Peak Shave Power | `0x00BE` | Max generator power while gen peak shaving is on (W) |
 | `select` | Work Mode | `0x008E` | Selling First / Zero Export to Load / Zero Export to CT |
+| `switch` | Grid Peak Shaving | `0x00B2` bit 4 | Enable grid peak-shaving (read-modify-write of the packed flag register) |
+| `switch` | Gen Peak Shaving | `0x00B2` bit 2 | Enable generator peak-shaving (read-modify-write of the packed flag register) |
 | `time` | Grid Charge From | `0x0095` | Charge window start time |
 | `time` | Grid Charge To | `0x0096` | Charge window end time |
 

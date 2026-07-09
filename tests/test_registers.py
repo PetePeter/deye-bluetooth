@@ -236,6 +236,62 @@ def test_work_mode_unknown_value():
     assert r.decode({0x008E: [7]})["work_mode"] == "Unknown (7)"
 
 
+# --- Peak-shaving controls ---------------------------------------------------
+# All values confirmed by the live MITM capture 2026-07-09 (device SN 2507245326):
+# the opType-5 write frame set 0x00B2=0x2ABA, 0x00BE=0x1F40 (8000 W),
+# 0x00BF=0x4074 (16500 W), and the device readback ACK returned the same words.
+# 0x2AAA is the both-off baseline; grid enable is bit 4, gen enable is bit 2.
+
+def test_peak_shave_power_decode():
+    # 0x00BE gen power, 0x00BF grid power — raw watts, no scaling.
+    data = r.decode({0x00BE: [0x1F40, 0x4074]})  # 0x00BE..0x00BF
+    assert data["gen_peak_power"] == 8000
+    assert data["grid_peak_power"] == 16500
+    assert r.REG_GEN_PEAK_POWER == 0x00BE
+    assert r.REG_GRID_PEAK_POWER == 0x00BF
+
+
+@pytest.mark.parametrize("raw,grid_on,gen_on", [
+    (0x2AAA, False, False),  # baseline both off
+    (0x2ABA, True, False),   # grid enabled (bit 4)
+    (0x2AAE, False, True),   # gen enabled (bit 2)
+    (0x2ABE, True, True),    # grid + gen both enabled
+])
+def test_peak_shave_flags_decode(raw, grid_on, gen_on):
+    data = r.decode({0x00B2: [raw]})
+    assert data["grid_peak_shaving"] is grid_on
+    assert data["gen_peak_shaving"] is gen_on
+    # The raw word is published so the switch can read-modify-write safely.
+    assert data["peak_shaving_flags_raw"] == raw
+
+
+def test_peak_shave_masks_are_the_confirmed_bits():
+    assert r.GRID_PEAK_SHAVE_MASK == 0x0010  # bit 4
+    assert r.GEN_PEAK_SHAVE_MASK == 0x0004   # bit 2
+    assert r.REG_PEAK_SHAVING_FLAGS == 0x00B2
+
+
+def test_peak_shave_block_is_polled():
+    # Flags + both power regs must fall inside one polled control block.
+    for reg in (0x00B2, 0x00BE, 0x00BF):
+        assert any(
+            start <= reg < start + count for start, count in r.CONTROL_BLOCKS
+        ), f"0x{reg:04X} not polled"
+
+
+def test_set_flag_read_modify_write_preserves_other_bits():
+    # Enabling grid shaving on the baseline must only set bit 4 (0x2AAA -> 0x2ABA)
+    # and must not disturb the gen bit or any other function bit.
+    assert r.set_flag(0x2AAA, r.GRID_PEAK_SHAVE_MASK, True) == 0x2ABA
+    # Enabling gen on top of grid-on preserves the grid bit (0x2ABA -> 0x2ABE).
+    assert r.set_flag(0x2ABA, r.GEN_PEAK_SHAVE_MASK, True) == 0x2ABE
+    # Disabling grid from the both-on word clears only bit 4 (0x2ABE -> 0x2AAE).
+    assert r.set_flag(0x2ABE, r.GRID_PEAK_SHAVE_MASK, False) == 0x2AAE
+    # Setting an already-set bit / clearing an already-clear bit is a no-op.
+    assert r.set_flag(0x2ABA, r.GRID_PEAK_SHAVE_MASK, True) == 0x2ABA
+    assert r.set_flag(0x2AAA, r.GEN_PEAK_SHAVE_MASK, False) == 0x2AAA
+
+
 # --- Encoders / signedness ---------------------------------------------------
 
 def test_work_mode_roundtrip():

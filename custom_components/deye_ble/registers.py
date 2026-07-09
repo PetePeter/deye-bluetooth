@@ -41,6 +41,7 @@ CONTROL_BLOCKS: list[tuple[int, int]] = [
     (0x008E, 2),   # 0x008E work mode, 0x008F max sell power
     (0x0095, 2),   # 0x0095 charge window start, 0x0096 charge window end (HHMM)
     (0x00A6, 6),   # 0x00A6..0x00AB TOU slot 1-6 target SOC (%) — charge + discharge
+    (0x00B2, 14),  # 0x00B2 peak-shaving flags + 0x00BE/0x00BF gen/grid shave power
 ]
 
 
@@ -61,6 +62,27 @@ REG_CHARGE_SOC = 0x00A7       # slot 2 target SOC — the charge ceiling
 # Slot 2 (0x00A7) is the grid-charge slot and is excluded. Writing the same
 # value to all five makes the inverter hold that SOC whenever it isn't charging.
 DISCHARGE_SOC_REGS = [0x00A6, 0x00A8, 0x00A9, 0x00AA, 0x00AB]
+
+# Peak-shaving controls (confirmed by live MITM 2026-07-09, device SN 2507245326:
+# opType-5 write == device readback ACK). 0x00B2 is a packed Advanced-Function-1
+# bitfield — the enable flags share it with other, unmapped functions (ARC,
+# BMS-stop, Parallel, DRM...), so toggling one MUST read-modify-write to preserve
+# the rest. 0x00BE/0x00BF are plain watt setpoints.
+REG_PEAK_SHAVING_FLAGS = 0x00B2
+REG_GEN_PEAK_POWER = 0x00BE     # generator peak-shaving power cap (W)
+REG_GRID_PEAK_POWER = 0x00BF    # grid peak-shaving power cap (W)
+
+GEN_PEAK_SHAVE_MASK = 0x0004    # 0x00B2 bit 2 — generator peak-shaving enable
+GRID_PEAK_SHAVE_MASK = 0x0010   # 0x00B2 bit 4 — grid peak-shaving enable
+
+
+def set_flag(raw: int, mask: int, on: bool) -> int:
+    """Return *raw* with *mask* bits set when *on*, cleared otherwise.
+
+    Used for read-modify-write on the packed 0x00B2 flag register so a single
+    peak-shaving toggle never clobbers the other function bits sharing it.
+    """
+    return (raw | mask) if on else (raw & ~mask)
 
 
 # --- Work mode enum ---------------------------------------------------------
@@ -131,7 +153,10 @@ _DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
     "max_sell_power":          (0x008F, 1,    False, 0),     # W
     "charge_soc":              (0x00A7, 1,    False, 0),     # % (TOU charge target, slot 2)
     "discharge_soc":           (0x00A6, 1,    False, 0),     # % (TOU floor, slot 1 representative)
-    # work_mode (enum) and charge_start/charge_end (HHMM) handled specially below.
+    "gen_peak_power":          (0x00BE, 1,    False, 0),     # W (generator peak-shaving cap)
+    "grid_peak_power":         (0x00BF, 1,    False, 0),     # W (grid peak-shaving cap)
+    # work_mode (enum), charge_start/charge_end (HHMM), and the 0x00B2 peak-shaving
+    # enable bits are handled specially below.
 }
 
 
@@ -172,6 +197,15 @@ def decode(words_by_reg: dict[int, list[int]]) -> dict[str, float | int | str]:
     work_mode_raw = _lookup(words_by_reg, REG_WORK_MODE)
     if work_mode_raw is not None:
         result["work_mode"] = WORK_MODE_LABELS.get(work_mode_raw, f"Unknown ({work_mode_raw})")
+
+    # Peak-shaving enable flags share the packed 0x00B2 register. Publish the raw
+    # word too — the switch entities need it to read-modify-write a single bit
+    # without clobbering the other function bits.
+    flags_raw = _lookup(words_by_reg, REG_PEAK_SHAVING_FLAGS)
+    if flags_raw is not None:
+        result["peak_shaving_flags_raw"] = flags_raw
+        result["grid_peak_shaving"] = bool(flags_raw & GRID_PEAK_SHAVE_MASK)
+        result["gen_peak_shaving"] = bool(flags_raw & GEN_PEAK_SHAVE_MASK)
 
     # TOU charge window times are stored as HHMM; decode to "HH:MM" strings.
     # An unset/invalid slot value (e.g. 0xFFFF) is omitted rather than published.
