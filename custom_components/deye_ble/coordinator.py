@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from homeassistant.components.bluetooth import async_ble_device_from_address
@@ -18,6 +19,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     CONFIG_READ_INTERVAL,
     DEFAULT_DRY_RUN,
+    DEFAULT_KEEPALIVE,
     DEFAULT_REASSERT,
     DOMAIN,
     MAX_POLL_FAILURES,
@@ -61,6 +63,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         reassert: bool = DEFAULT_REASSERT,
         max_failures: int = MAX_POLL_FAILURES,
         write_attempts: int = MAX_WRITE_ATTEMPTS,
+        keepalive: bool = DEFAULT_KEEPALIVE,
     ) -> None:
         super().__init__(
             hass,
@@ -80,6 +83,10 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         self._write_backoff = WRITE_RETRY_BACKOFF
         self._consecutive_failures = 0
         self._tracked_values: dict[int, int | str] = {}
+        self._keepalive = keepalive
+        # The single reused transport when keepalive is on; None when there is no
+        # live session (keepalive off, not yet connected, or dropped after error).
+        self._persistent = None
         # The logger accepts ONE BLE central at a time, so polls and writes must
         # never hold a connection simultaneously, or bleak reports
         # "br-connection-canceled". This lock serializes all BLE sessions.
@@ -100,6 +107,59 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
     @reassert.setter
     def reassert(self, value: bool) -> None:
         self._reassert = value
+
+    @property
+    def keepalive(self) -> bool:
+        return self._keepalive
+
+    async def async_set_keepalive(self, value: bool) -> None:
+        """Toggle persistent-connection mode, releasing the held link if turned
+        off so the ESP proxy slot (and the logger's single central) frees up at
+        once."""
+        self._keepalive = value
+        if not value:
+            async with self._ble_lock:
+                await self._drop_persistent()
+
+    async def async_close(self) -> None:
+        """Release any held BLE session (called on unload)."""
+        async with self._ble_lock:
+            await self._drop_persistent()
+
+    async def _drop_persistent(self) -> None:
+        """Disconnect and forget the reused transport, best-effort."""
+        transport, self._persistent = self._persistent, None
+        if transport is not None:
+            try:
+                await transport.disconnect()
+            except Exception:  # noqa: BLE001 — teardown is best-effort
+                _LOGGER.debug("dropping persistent BLE link failed", exc_info=True)
+
+    @asynccontextmanager
+    async def _session(self, ble_device):
+        """Yield a connected transport following the keepalive strategy.
+
+        keepalive OFF: open a fresh session and close it on exit (the resilient
+        default — every poll/write reconnects). keepalive ON: connect once and
+        reuse the link across polls and writes, but drop it on any error so the
+        next call cleanly reconnects. Callers hold ``_ble_lock`` around this.
+        """
+        if not self._keepalive:
+            async with self._transport_factory(ble_device) as transport:
+                yield transport
+            return
+
+        if self._persistent is None:
+            transport = self._transport_factory(ble_device)
+            await transport.connect()
+            self._persistent = transport
+        try:
+            yield self._persistent
+        except Exception:
+            # A reused link that just errored is suspect — drop it rather than
+            # keep handing back a possibly half-open connection.
+            await self._drop_persistent()
+            raise
 
     def mark_config_dirty(self) -> None:
         self._config_dirty = True
@@ -124,7 +184,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             config_due = self._config_due()
 
             async with self._ble_lock:
-                async with self._transport_factory(ble_device) as transport:
+                async with self._session(ble_device) as transport:
                     data = await async_poll(transport, with_config=config_due)
         except Exception as e:
             return self._handle_poll_failure(e)
@@ -260,7 +320,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             try:
                 # Serialize against the poll — one BLE central at a time.
                 async with self._ble_lock:
-                    async with self._transport_factory(ble_device) as transport:
+                    async with self._session(ble_device) as transport:
                         await transport.handshake()
                         for reg, value in regs.items():
                             await transport.write(reg, value)

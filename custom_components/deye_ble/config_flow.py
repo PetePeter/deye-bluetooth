@@ -20,10 +20,12 @@ from homeassistant.helpers.device_registry import format_mac
 from .const import (
     CONF_ADDRESS,
     CONF_DRY_RUN,
+    CONF_KEEPALIVE,
     CONF_LOGGER_SN,
     CONF_REASSERT,
     CONF_SCAN_INTERVAL,
     DEFAULT_DRY_RUN,
+    DEFAULT_KEEPALIVE,
     DEFAULT_REASSERT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -166,7 +168,7 @@ class DeyeBleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class DeyeBleOptionsFlowHandler(config_entries.OptionsFlow):
-    """Options flow for scan interval, dry-run and reassert."""
+    """Options flow for scan interval, dry-run, reassert and keepalive."""
 
     async def async_step_init(self, user_input: dict | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -185,6 +187,10 @@ class DeyeBleOptionsFlowHandler(config_entries.OptionsFlow):
             vol.Required(
                 CONF_REASSERT,
                 default=current.get(CONF_REASSERT, DEFAULT_REASSERT),
+            ): bool,
+            vol.Required(
+                CONF_KEEPALIVE,
+                default=current.get(CONF_KEEPALIVE, DEFAULT_KEEPALIVE),
             ): bool,
         })
         return self.async_show_form(step_id="init", data_schema=schema)

@@ -20,5 +20,21 @@
       "already_configured": "This device is already configured.",
       "no_devices_found": "No Deye inverter found nearby. Make sure Bluetooth is enabled on the inverter."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Deye BLE options",
+        "data": {
+          "scan_interval": "Telemetry poll interval (seconds)",
+          "dry_run": "Dry run (log writes without touching the inverter)",
+          "reassert": "Reassert local values on drift",
+          "keepalive": "Keep the Bluetooth connection open"
+        },
+        "data_description": {
+          "keepalive": "Reuse a single BLE link instead of reconnecting every poll. Reduces the reconnect churn that can hang the logger, but holds an ESP proxy connection slot and blocks the phone app (one central at a time). Leave off unless Home Assistant owns the Bluetooth link."
+        }
+      }
+    }
   }
 }

@@ -10,10 +10,12 @@ import logging
 from .const import (
     CONF_ADDRESS,
     CONF_DRY_RUN,
+    CONF_KEEPALIVE,
     CONF_LOGGER_SN,
     CONF_REASSERT,
     CONF_SCAN_INTERVAL,
     DEFAULT_DRY_RUN,
+    DEFAULT_KEEPALIVE,
     DEFAULT_REASSERT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -46,6 +48,7 @@ async def async_setup_entry(hass, entry) -> bool:
         scan_interval=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
         dry_run=options.get(CONF_DRY_RUN, DEFAULT_DRY_RUN),
         reassert=options.get(CONF_REASSERT, DEFAULT_REASSERT),
+        keepalive=options.get(CONF_KEEPALIVE, DEFAULT_KEEPALIVE),
     )
 
     await coordinator.async_config_entry_first_refresh()
@@ -58,6 +61,10 @@ async def async_setup_entry(hass, entry) -> bool:
         coordinator.reassert = entry.options.get(CONF_REASSERT, DEFAULT_REASSERT)
         coordinator.update_interval = timedelta(
             seconds=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        )
+        # Releases the held BLE link immediately when keepalive is switched off.
+        await coordinator.async_set_keepalive(
+            entry.options.get(CONF_KEEPALIVE, DEFAULT_KEEPALIVE)
         )
 
     entry.async_on_unload(entry.add_update_listener(_on_options_update))
@@ -85,5 +92,7 @@ async def async_unload_entry(hass, entry) -> bool:
     if unload_ok := await hass.config_entries.async_unload_platforms(
         entry, PLATFORMS
     ):
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+        coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
+        if coordinator is not None:
+            await coordinator.async_close()  # release any held BLE link
     return unload_ok

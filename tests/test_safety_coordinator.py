@@ -594,3 +594,124 @@ class TestWriteRetry:
         await coordinator.async_write(REG_MAX_SELL_POWER, 200)
 
         assert transport.write_attempts == 1
+
+
+# --- Persistent connection (opt-in keepalive) --------------------------------
+
+class CountingTransport(WriteableFakeTransport):
+    """Fake transport that counts explicit connect()/disconnect() calls.
+
+    The keepalive path connects/disconnects the transport directly; the per-poll
+    path drives the same via the async-context-manager protocol. Both funnel
+    through connect()/disconnect() here so a test can assert how many BLE
+    sessions actually happened.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.connects = 0
+        self.disconnects = 0
+
+    async def connect(self) -> None:
+        self.connects += 1
+
+    async def disconnect(self) -> None:
+        self.disconnects += 1
+
+    async def __aenter__(self) -> "CountingTransport":
+        await self.connect()
+        return self
+
+    async def __aexit__(self, *exc) -> bool:
+        await self.disconnect()
+        return False
+
+
+def _counting_factory(behaviors=None):
+    """Return (factory, created) where factory mints a CountingTransport per call.
+
+    ``behaviors`` is an optional list of kwarg dicts applied to successive
+    transports (the last entry repeats), so a test can make the first session
+    fail and later ones succeed.
+    """
+    created: list[CountingTransport] = []
+    behaviors = behaviors or [{}]
+
+    def factory(_dev):
+        kw = behaviors[min(len(created), len(behaviors) - 1)]
+        t = CountingTransport(**kw)
+        created.append(t)
+        return t
+
+    return factory, created
+
+
+class TestKeepalive:
+    """Opt-in persistent connection: reuse one BLE link across polls/writes,
+    drop it on error, and release it the instant keepalive is turned off."""
+
+    def _coordinator(self, factory, *, keepalive):
+        from custom_components.deye_ble.coordinator import DeyeBleCoordinator
+
+        coordinator = DeyeBleCoordinator(
+            hass=None,
+            address="AA:BB:CC:DD:EE:FF",
+            transport_factory=factory,
+            keepalive=keepalive,
+        )
+        coordinator._resolve_device = lambda: object()
+        return coordinator
+
+    @pytest.mark.asyncio
+    async def test_keepalive_reuses_one_connection_across_polls(self):
+        factory, created = _counting_factory()
+        coordinator = self._coordinator(factory, keepalive=True)
+
+        await coordinator._async_update_data()
+        await coordinator._async_update_data()
+
+        assert len(created) == 1          # one transport, reused
+        assert created[0].connects == 1   # connected once
+        assert created[0].disconnects == 0  # never torn down between polls
+
+    @pytest.mark.asyncio
+    async def test_keepalive_drops_link_on_failure_then_reconnects(self):
+        # First session fails mid-poll; the held link must be dropped so the
+        # next poll builds a fresh one.
+        factory, created = _counting_factory(
+            behaviors=[{"fail_on_block": 0x024A}, {}]
+        )
+        coordinator = self._coordinator(factory, keepalive=True)
+        coordinator.async_set_updated_data({"solar_power": 1})  # tolerate 1 failure
+
+        await coordinator._async_update_data()  # fails -> drops T1
+        await coordinator._async_update_data()  # reconnects -> T2
+
+        assert len(created) == 2
+        assert created[0].disconnects == 1     # failed link torn down
+        assert created[1].connects == 1        # fresh reconnect
+
+    @pytest.mark.asyncio
+    async def test_turning_keepalive_off_disconnects_held_link(self):
+        factory, created = _counting_factory()
+        coordinator = self._coordinator(factory, keepalive=True)
+
+        await coordinator._async_update_data()  # establishes the held link
+        assert created[0].connects == 1
+
+        await coordinator.async_set_keepalive(False)
+
+        assert created[0].disconnects == 1
+        assert coordinator._persistent is None
+
+    @pytest.mark.asyncio
+    async def test_keepalive_off_reconnects_each_poll(self):
+        # Default behaviour must be unchanged: a fresh session per poll.
+        factory, created = _counting_factory()
+        coordinator = self._coordinator(factory, keepalive=False)
+
+        await coordinator._async_update_data()
+        await coordinator._async_update_data()
+
+        assert len(created) == 2
+        assert all(t.connects == 1 and t.disconnects == 1 for t in created)

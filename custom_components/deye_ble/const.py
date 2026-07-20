@@ -8,9 +8,14 @@ CONF_ADDRESS = "address"
 CONF_DRY_RUN = "dry_run"
 CONF_REASSERT = "reassert"
 CONF_SCAN_INTERVAL = "scan_interval"
+CONF_KEEPALIVE = "keepalive"
 
 DEFAULT_DRY_RUN = True   # writes blocked until user explicitly enables
 DEFAULT_REASSERT = False  # local-wins reassert is opt-in
+# Persistent BLE connection: reuse one link instead of reconnecting per poll.
+# Opt-in — off by default so it can't hold an ESP proxy slot (or the logger's
+# single central) until the user explicitly enables it.
+DEFAULT_KEEPALIVE = False
 
 DEFAULT_SCAN_INTERVAL = 60            # seconds — telemetry poll (user-configurable)
 MIN_SCAN_INTERVAL = 30               # floor to protect BLE reconnect stability
