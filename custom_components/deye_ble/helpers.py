@@ -96,6 +96,7 @@ def validate_logger_sn(sn: str) -> str:
 _REG_TO_KEY: dict[int, str] = {
     r.REG_WORK_MODE: "work_mode",
     r.REG_MAX_SELL_POWER: "max_sell_power",
+    r.REG_ZERO_EXPORT_POWER: "zero_export_power",
     r.REG_TOU_SLOT2_START: "charge_start",
     r.REG_TOU_SLOT3_START: "charge_end",
     r.REG_CHARGE_SOC: "charge_soc",
@@ -127,9 +128,14 @@ class ReadbackError(ValueError):
 def verify_readback(reg: int, expected: int, actual: int) -> None:
     """Compare a write's expected value against the device read-back.
 
+    Registers are 16-bit, and ``parse_read`` returns the raw *unsigned* word.
+    Comparing on the 16-bit wire value (``& 0xFFFF``) means a signed write such
+    as ``-30`` (wire ``0xFFE2``) verifies against its unsigned read-back
+    (``65506``) without any per-register signedness plumbing.
+
     Returns ``None`` on match.  Raises :class:`ReadbackError` on mismatch.
     """
-    if expected != actual:
+    if (expected & 0xFFFF) != (actual & 0xFFFF):
         raise ReadbackError(
             f"readback mismatch at 0x{reg:04X}: expected {expected}, got {actual}"
         )

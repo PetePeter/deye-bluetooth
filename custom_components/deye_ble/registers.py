@@ -36,6 +36,7 @@ READ_BLOCKS: list[tuple[int, int]] = [
 
 # Control registers, read on the slower config cycle (P3).
 CONTROL_BLOCKS: list[tuple[int, int]] = [
+    (0x0068, 1),   # 0x0068 zero-export power (W, signed)
     (0x006C, 2),   # 0x006C max charge current, 0x006D max discharge current (A)
     (0x0073, 3),   # 0x0073/0x0074/0x0075 batt shutdown/restart/low SOC (%)
     (0x008E, 2),   # 0x008E work mode, 0x008F max sell power
@@ -47,6 +48,7 @@ CONTROL_BLOCKS: list[tuple[int, int]] = [
 
 # --- Control register addresses ---------------------------------------------
 
+REG_ZERO_EXPORT_POWER = 0x0068      # zero-export power / grid-comp offset (W, signed)
 REG_MAX_CHARGE_CURRENT = 0x006C     # battery max charge current (A)
 REG_MAX_DISCHARGE_CURRENT = 0x006D  # battery max discharge current (A)
 REG_BATT_SHUTDOWN_SOC = 0x0073      # battery shutdown SOC (%)
@@ -145,6 +147,7 @@ _DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
     "total_consumption":       (0x020F, 0.1,  False, 0),  # lifetime; daily_consumption derived in P4
 
     # Control mirrors (decoded from CONTROL_BLOCKS)
+    "zero_export_power":       (0x0068, 1,    True,  0),     # W (grid-comp offset; negative = force import)
     "max_charge_current":      (0x006C, 1,    False, 0),     # A (battery charge current limit)
     "max_discharge_current":   (0x006D, 1,    False, 0),     # A (battery discharge current limit)
     "batt_shutdown_soc":       (0x0073, 1,    False, 0),     # % (battery shutdown floor)

@@ -22,6 +22,7 @@ from .registers import (
     REG_MAX_CHARGE_CURRENT,
     REG_MAX_DISCHARGE_CURRENT,
     REG_MAX_SELL_POWER,
+    REG_ZERO_EXPORT_POWER,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ async def async_setup_entry(
     sn = entry.data[CONF_LOGGER_SN]
     async_add_entities([
         DeyeMaxSellPower(coordinator, entry, sn),
+        DeyeZeroExportPower(coordinator, entry, sn),
         DeyeChargeSoc(coordinator, entry, sn),
         DeyeDischargeSoc(coordinator, entry, sn),
         DeyeMaxChargeCurrent(coordinator, entry, sn),
@@ -95,6 +97,26 @@ class DeyeMaxSellPower(_SingleRegisterNumber):
     _attr_native_unit_of_measurement = "W"
     _attr_native_min_value = 0
     _attr_native_max_value = 10000
+    _attr_native_step = 1
+    _attr_mode = NumberMode.BOX
+    _attr_device_class = NumberDeviceClass.POWER
+
+
+class DeyeZeroExportPower(_SingleRegisterNumber):
+    """Zero-export power / grid-compensation offset (W). Reg 0x0068, signed.
+
+    In Zero Export to CT this biases the CT target: positive holds a small grid
+    import; a *negative* value (blocked by the phone app but accepted by the
+    inverter — live-probed) forces export/feed-in up to that magnitude.
+    """
+
+    _register = REG_ZERO_EXPORT_POWER
+    _data_key = "zero_export_power"
+    _attr_name = "Zero Export Power"
+    _attr_icon = "mdi:transmission-tower-import"
+    _attr_native_unit_of_measurement = "W"
+    _attr_native_min_value = -15000
+    _attr_native_max_value = 100
     _attr_native_step = 1
     _attr_mode = NumberMode.BOX
     _attr_device_class = NumberDeviceClass.POWER

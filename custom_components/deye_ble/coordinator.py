@@ -32,7 +32,7 @@ _LOGGER = logging.getLogger(__name__)
 # exist optimistically (no read-back until P5 adds TOU reads). All are carried
 # forward across polls so a config value isn't dropped (blanking its entity) on
 # the telemetry-only cycles between config reads.
-_CONFIG_KEYS = ("work_mode", "max_sell_power")
+_CONFIG_KEYS = ("work_mode", "max_sell_power", "zero_export_power")
 _CARRY_KEYS = _CONFIG_KEYS + (
     "charge_soc", "discharge_soc", "charge_start", "charge_end",
     "max_charge_current", "max_discharge_current",

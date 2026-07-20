@@ -132,6 +132,22 @@ def test_max_sell_power_from_real_single_register_frame():
     assert data["max_sell_power"] == 100
 
 
+def test_zero_export_power_decode_signed():
+    # 0x0068 = zero-export power (W), signed. 20 W positive, -30 as 0xFFE2,
+    # -1000 as 0xFC18 — the negatives were live-probed as accepted by the inverter.
+    assert r.decode({0x0068: [20]})["zero_export_power"] == 20
+    assert r.decode({0x0068: [0xFFE2]})["zero_export_power"] == -30
+    assert r.decode({0x0068: [0xFC18]})["zero_export_power"] == -1000
+    assert r.REG_ZERO_EXPORT_POWER == 0x0068
+
+
+def test_zero_export_power_block_is_polled():
+    # 0x0068 must fall inside a CONTROL_BLOCKS read so native_value tracks the device.
+    assert any(
+        start <= 0x0068 < start + count for start, count in r.CONTROL_BLOCKS
+    )
+
+
 def test_max_charge_discharge_current_decode():
     # Registers 0x006C/0x006D, confirmed by a live MITM capture of the Deye app
     # writing these values (raw = amps, no scaling). Guards the reverse-engineered

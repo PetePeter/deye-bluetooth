@@ -19,6 +19,7 @@ from custom_components.deye_ble.number import (
     DeyeGridPeakPower,
     DeyeMaxChargeCurrent,
     DeyeMaxDischargeCurrent,
+    DeyeZeroExportPower,
 )
 from custom_components.deye_ble.registers import (
     DISCHARGE_SOC_REGS,
@@ -29,6 +30,7 @@ from custom_components.deye_ble.registers import (
     REG_GRID_PEAK_POWER,
     REG_MAX_CHARGE_CURRENT,
     REG_MAX_DISCHARGE_CURRENT,
+    REG_ZERO_EXPORT_POWER,
 )
 
 
@@ -101,6 +103,8 @@ async def test_max_discharge_current_writes_to_register_0x006d():
     # Peak-shave caps stay editable and write through on every change.
     (DeyeGridPeakPower, REG_GRID_PEAK_POWER, "grid_peak_power", 16500),
     (DeyeGenPeakPower, REG_GEN_PEAK_POWER, "gen_peak_power", 8000),
+    # Zero-export power is signed — a negative must pass through unchanged.
+    (DeyeZeroExportPower, REG_ZERO_EXPORT_POWER, "zero_export_power", -30),
 ])
 @pytest.mark.asyncio
 async def test_single_register_number_writes_to_expected_register(
@@ -114,3 +118,11 @@ async def test_single_register_number_writes_to_expected_register(
     assert coordinator.write_calls == [(reg, value)]
     assert coordinator.updated[data_key] == value
     assert coordinator.dirty
+
+
+def test_zero_export_power_allows_negative_range():
+    # The phone app blocks negatives; the entity must expose the signed range
+    # (live-probed: -15000..100) so a grid-import/feed-in bias can be set from HA.
+    entity = DeyeZeroExportPower(FakeCoordinator(), FakeEntry("DEYE00000001"), "DEYE00000001")
+    assert entity._attr_native_min_value == -15000
+    assert entity._attr_native_max_value == 100

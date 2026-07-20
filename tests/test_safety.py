@@ -34,6 +34,15 @@ class TestVerifyReadback:
         with pytest.raises(ValueError, match="0x008E"):
             verify_readback(0x008E, 0, 2)
 
+    def test_signed_write_verifies_against_unsigned_readback(self):
+        # -30 on the wire is 0xFFE2; parse_read returns it unsigned as 65506.
+        assert verify_readback(0x0068, -30, 0xFFE2) is None
+        assert verify_readback(0x0068, -1000, 0xFC18) is None
+
+    def test_signed_mismatch_still_raises(self):
+        with pytest.raises(ValueError, match="0x0068"):
+            verify_readback(0x0068, -30, 0xFFE3)
+
 
 # --- detect_drift ------------------------------------------------------------
 
