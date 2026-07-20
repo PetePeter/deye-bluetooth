@@ -24,6 +24,9 @@ NOTIFY_CHAR = "0000fed8-0000-1000-8000-00805f9b34fb"  # notify (CCCD enabled by 
 
 DEFAULT_TIMEOUT = 10.0  # seconds to await a notification reply
 CONNECT_ATTEMPTS = 3    # establish_connection retries transient proxy failures
+# A hung disconnect on a flaky proxy link must never hold the caller (and thus
+# the coordinator's BLE lock) open — bound it, then drop the client regardless.
+DISCONNECT_TIMEOUT = 10.0
 
 
 class DeyeBleError(Exception):
@@ -47,6 +50,7 @@ class DeyeBleTransport:
             ble_device, "address", "deye"
         )
         self._timeout = timeout
+        self._disconnect_timeout = DISCONNECT_TIMEOUT
         self._client: BleakClient | None = None
         self._reply: asyncio.Future[str] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -72,13 +76,28 @@ class DeyeBleTransport:
         await self._client.start_notify(NOTIFY_CHAR, self._on_notify)
 
     async def disconnect(self) -> None:
-        if self._client is not None:
-            try:
-                await self._client.stop_notify(NOTIFY_CHAR)
-            except Exception:  # noqa: BLE001 — best-effort on teardown
-                pass
-            await self._client.disconnect()
-            self._client = None
+        """Tear down the session, but never block on it.
+
+        stop_notify and disconnect are best-effort: a flaky proxy link can leave
+        either hanging, and if disconnect stalls it would hold the coordinator's
+        BLE lock forever, wedging every subsequent poll and write until HA
+        restarts. Bound both with a timeout and always drop the client.
+        """
+        client, self._client = self._client, None
+        if client is None:
+            return
+        try:
+            await asyncio.wait_for(
+                client.stop_notify(NOTIFY_CHAR), self._disconnect_timeout
+            )
+        except Exception:  # noqa: BLE001 — best-effort on teardown
+            pass
+        try:
+            await asyncio.wait_for(
+                client.disconnect(), self._disconnect_timeout
+            )
+        except Exception:  # noqa: BLE001 — a hung/failed disconnect must not wedge us
+            _LOGGER.debug("BLE disconnect did not complete cleanly", exc_info=True)
 
     def _on_notify(self, _char, data: bytearray) -> None:
         text = bytes(data).decode("ascii", errors="replace").strip()
