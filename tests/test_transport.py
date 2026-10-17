@@ -14,6 +14,7 @@ import asyncio
 import pytest
 
 from custom_components.deye_ble import transport as t
+from custom_components.deye_ble import protocol as p
 
 
 class FakeBleakClient:
@@ -22,10 +23,12 @@ class FakeBleakClient:
     def __init__(
         self, *, disconnect_hangs: bool = False, start_notify_raises: bool = False,
         reply: str | None = None,
+        identity: tuple[int, int, int] = (5, 1, 0x0201),
     ):
         self._disconnect_hangs = disconnect_hangs
         self._start_notify_raises = start_notify_raises
         self._reply = reply
+        self._identity = identity
         self.written: list[bytes] = []
         self._notify_cb = None
         self.start_notify_called = False
@@ -41,8 +44,12 @@ class FakeBleakClient:
     async def write_gatt_char(self, _char, payload, response=True) -> None:
         """Record the AT payload and answer with the canned reply."""
         self.written.append(bytes(payload))
-        if self._reply is not None and self._notify_cb is not None:
-            self._notify_cb(None, bytearray(self._reply.encode()))
+        reply = self._reply
+        if payload == p.wrap_read(p.build_read(0, 3)):
+            body = bytes((1, 3, 6)) + b"".join(word.to_bytes(2, "big") for word in self._identity)
+            reply = "+ok=" + (body + p.crc16(body)).hex().upper()
+        if reply is not None and self._notify_cb is not None:
+            self._notify_cb(None, bytearray(reply.encode()))
 
     async def stop_notify(self, _char) -> None:
         self.stop_notify_called = True
@@ -158,7 +165,8 @@ async def test_block_write_sends_one_frame_and_accepts_the_ack(patch_connect):
     async with t.DeyeBleTransport(object()) as transport:
         await transport.write_block(0x003E, values)
 
-    at_frames = [w for w in client.written if w.startswith(b"AT+INVDATA=")]
+    at_frames = [w for w in client.written if w.startswith(b"AT+INVDATA=")
+                 and w.split(b",", 1)[1].startswith(b"0110")]
     assert len(at_frames) == 1, "the clock must go out as a single frame"
     assert request.hex().upper().encode() in at_frames[0]
 
@@ -178,3 +186,63 @@ async def test_block_write_raises_when_the_ack_does_not_match(patch_connect):
     async with t.DeyeBleTransport(object()) as transport:
         with pytest.raises(t.DeyeBleError, match="not acked"):
             await transport.write_block(0x003E, [0x1A08, 0x0F10, 0x2B00])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("device_type,expected", [(3, "single_phase"), (5, "legacy")])
+async def test_profile_uses_inverter_type_and_caches_identity(patch_connect, device_type, expected):
+    client = FakeBleakClient(reply="+ok=21511,21511", identity=(device_type, 1, 0x0201))
+    patch_connect(client)
+    async with t.DeyeBleTransport(object()) as transport:
+        await transport.handshake()
+        assert await transport.get_register_profile() == expected
+        assert await transport.get_register_profile() == expected
+    assert client.written == [b"AT+DTYPE\n", p.wrap_read(p.build_read(0, 3))]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("block", [False, True])
+async def test_single_phase_control_blocked_even_on_fresh_session(patch_connect, block):
+    client = FakeBleakClient(identity=(3, 1, 0x0201))
+    patch_connect(client)
+    async with t.DeyeBleTransport(object()) as transport:
+        with pytest.raises(t.DeyeBleError, match="monitoring only"):
+            if block:
+                await transport.write_block(62, [1, 2, 3])
+            else:
+                await transport.write(143, 100)
+    # Identification is a read; no function-10 write reached the fake hardware.
+    assert client.written == [p.wrap_read(p.build_read(0, 3))]
+
+
+@pytest.mark.asyncio
+async def test_single_phase_rejects_raw_control_command(patch_connect):
+    client = FakeBleakClient(identity=(3, 1, 0x0201))
+    patch_connect(client)
+    async with t.DeyeBleTransport(object()) as transport:
+        await transport.get_register_profile()
+        with pytest.raises(t.DeyeBleError, match="read-only profile"):
+            await transport._command(p.wrap_write(p.build_write(143, 100)))
+    assert client.written == [p.wrap_read(p.build_read(0, 3))]
+
+
+@pytest.mark.parametrize("payload", [
+    b"AT+RESET\n", b"AT+DTYPE=1\n", b"AT+DTYPE\nAT+RESET\n",
+    p.wrap_write(p.build_write(143, 100)),
+    p.wrap_read(p.build_read(183, 0)), p.wrap_read(p.build_read(183, 126)),
+    b"AT+INVDATA=8,010300B700020000\n",
+])
+def test_read_only_policy_rejects_invalid_or_setting_commands(payload):
+    with pytest.raises(t.DeyeBleError, match="read-only profile"):
+        t.validate_read_only_command(payload)
+
+
+def test_read_only_policy_accepts_identification_and_valid_read():
+    t.validate_read_only_command(b"AT+DTYPE\n")
+    t.validate_read_only_command(p.wrap_read(p.build_read(183, 2)))
+
+
+def test_read_only_policy_rejects_valid_crc_for_write_single_register():
+    body = bytes.fromhex("0106008F0064")
+    with pytest.raises(t.DeyeBleError, match="non-read"):
+        t.validate_read_only_command(p.wrap_read(body + p.crc16(body)))

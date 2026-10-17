@@ -28,6 +28,11 @@ PLATFORMS: list[str] = [
 ]
 
 
+def platforms_for_profile(profile):
+    """Only verified monitoring entities are exposed for single-phase devices."""
+    return ["sensor", "binary_sensor"] if profile == "single_phase" else PLATFORMS
+
+
 async def async_setup_entry(hass, entry) -> bool:
     """Set up Deye BLE from a config entry."""
     from homeassistant.config_entries import ConfigEntry  # noqa: F811
@@ -96,14 +101,17 @@ async def async_setup_entry(hass, entry) -> bool:
 
     hass.services.async_register(DOMAIN, "sync_clock", _sync_clock_service)
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    platforms = platforms_for_profile((coordinator.data or {}).get("_register_profile"))
+    await hass.config_entries.async_forward_entry_setups(entry, platforms)
     return True
 
 
 async def async_unload_entry(hass, entry) -> bool:
     """Unload Deye BLE config entry."""
+    coordinator = hass.data[DOMAIN].get(entry.entry_id)
+    platforms = platforms_for_profile((coordinator.data or {}).get("_register_profile")) if coordinator else PLATFORMS
     if unload_ok := await hass.config_entries.async_unload_platforms(
-        entry, PLATFORMS
+        entry, platforms
     ):
         coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
         if coordinator is not None:

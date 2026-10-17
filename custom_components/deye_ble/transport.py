@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from bleak import BleakClient
 from bleak_retry_connector import establish_connection
@@ -31,6 +32,25 @@ DISCONNECT_TIMEOUT = 10.0
 
 class DeyeBleError(Exception):
     """Connection lost, timed out, or the logger rejected a command."""
+
+
+def validate_read_only_command(payload: bytes) -> None:
+    """Reject everything except identification and a valid Modbus 0x03 read.
+
+    Used by the single-phase monitoring profile before sending any command.
+    """
+    if payload == b"AT+DTYPE\n":
+        return
+    match = re.fullmatch(rb"AT\+INVDATA=8,([0-9A-F]{16})\n", payload)
+    if match is None:
+        raise DeyeBleError("read-only profile: command blocked before Bluetooth transmission")
+    frame = bytes.fromhex(match[1].decode("ascii"))
+    address = int.from_bytes(frame[2:4], "big")
+    count = int.from_bytes(frame[4:6], "big")
+    if (frame[:2] != b"\x01\x03" or p.crc16(frame[:-2]) != frame[-2:]
+            or not 1 <= count <= 125 or address + count > 0x10000):
+        raise DeyeBleError("read-only profile: invalid or non-read Modbus frame blocked")
+
 
 
 class DeyeBleTransport:
@@ -54,6 +74,7 @@ class DeyeBleTransport:
         self._client: BleakClient | None = None
         self._reply: asyncio.Future[str] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._register_profile: str | None = None
 
     async def __aenter__(self) -> "DeyeBleTransport":
         await self.connect()
@@ -116,6 +137,8 @@ class DeyeBleTransport:
             self._reply.set_result(text)
 
     async def _command(self, payload: bytes) -> str:
+        if self._register_profile == "single_phase":
+            validate_read_only_command(payload)
         if self._client is None or self._loop is None:
             raise DeyeBleError("not connected")
         self._reply = self._loop.create_future()
@@ -132,6 +155,28 @@ class DeyeBleTransport:
         if not p.is_handshake_ack(reply):
             raise DeyeBleError(f"unexpected handshake reply: {reply!r}")
 
+    async def get_register_profile(self) -> str:
+        """Identify the inverter, independently of the logger's DTYPE reply.
+
+        Type 3 is the single-phase hybrid tested on SUN-6K-SG04LP1-EU.
+        Other types retain the original register map and control behavior.
+        """
+        if self._register_profile is None:
+            identity = await self.read(0, 3)
+            if len(identity) != 3:
+                raise DeyeBleError("incomplete inverter identification response")
+            self._register_profile = "single_phase" if identity[0] == 0x003 else "legacy"
+            _LOGGER.debug("Inverter type 0x%04X, protocol %d.%d, profile %s",
+                          identity[0], identity[2] >> 8, identity[2] & 0xFF,
+                          self._register_profile)
+        return self._register_profile
+
+    async def _check_control_support(self) -> None:
+        # Identify on a fresh write session too, before sending any settings.
+        # The logger's accepted handshake reply does not identify the inverter.
+        if await self.get_register_profile() == "single_phase":
+            raise DeyeBleError("single-phase profile supports monitoring only; controls are disabled")
+
     async def read(self, address: int, count: int) -> list[int]:
         reply = await self._command(p.wrap_read(p.build_read(address, count)))
         try:
@@ -145,6 +190,7 @@ class DeyeBleTransport:
         Used by the clock commit, where three separate single-register frames
         corrupt the year byte on this hardware.
         """
+        await self._check_control_support()
         request = p.build_write_block(address, values)
         reply = await self._command(p.wrap_write(request))
         try:
@@ -158,6 +204,7 @@ class DeyeBleTransport:
 
     async def write(self, address: int, value: int) -> None:
         """Write a register and verify the ack echoes the address + quantity."""
+        await self._check_control_support()
         request = p.build_write(address, value)
         reply = await self._command(p.wrap_write(request))
         try:

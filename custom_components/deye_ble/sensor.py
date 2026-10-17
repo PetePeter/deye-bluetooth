@@ -63,10 +63,16 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    entities = [DeyeSensor(coordinator, entry, *row) for row in SENSORS]
+    single = (coordinator.data or {}).get("_register_profile") == "single_phase"
+    rows = SENSORS
+    if single:
+        from .single_phase import SENSOR_KEYS
+        rows = [row for row in rows if row[0] in SENSOR_KEYS]
+    entities = [DeyeSensor(coordinator, entry, *row) for row in rows]
     entities.append(DeyeDailyConsumptionSensor(coordinator, entry))
     entities.append(DeyeInverterClockSensor(coordinator, entry))
-    entities.append(DeyeClockSyncResultSensor(coordinator, entry))
+    if not single:
+        entities.append(DeyeClockSyncResultSensor(coordinator, entry))
     entities.append(DeyeClockDriftSensor(coordinator, entry))
     entities.append(DeyeClockTimeOfDayDriftSensor(coordinator, entry))
     async_add_entities(entities)
@@ -287,6 +293,9 @@ class DeyeDailyConsumptionSensor(CoordinatorEntity, RestoreEntity, SensorEntity)
 
     def _recalculate(self) -> None:
         if self.coordinator.data is None:
+            return
+        if self.coordinator.data.get("_register_profile") == "single_phase":
+            self._value = self.coordinator.data.get("daily_consumption")
             return
         total = self.coordinator.data.get("total_consumption")
         today = dt_util.now().date()

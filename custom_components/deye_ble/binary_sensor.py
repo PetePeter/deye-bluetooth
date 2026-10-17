@@ -20,10 +20,10 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([
-        DeyeGridConnected(coordinator, entry),
-        DeyeCloudClockSyncEnabled(coordinator, entry),
-    ])
+    entities = [DeyeGridConnected(coordinator, entry)]
+    if (coordinator.data or {}).get("_register_profile") != "single_phase":
+        entities.append(DeyeCloudClockSyncEnabled(coordinator, entry))
+    async_add_entities(entities)
 
 
 def _device_info(sn: str) -> DeviceInfo:
