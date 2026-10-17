@@ -1,0 +1,7 @@
+bleak>=0.22.0
+bleak-retry-connector>=3.0.0
+
+PyYAML
+
+pytest
+pytest-asyncio
