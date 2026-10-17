@@ -426,6 +426,8 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Raises HomeAssistantError if no attempt verifies, or if the clock landed
         but Time Sync could not be re-enabled.
         """
+        if (self.data or {}).get("_register_profile") == "single_phase":
+            raise HomeAssistantError("Single-phase profile supports monitoring only; controls are disabled")
         if self._dry_run:
             _LOGGER.info("dry-run: would sync inverter clock (no GATT write issued)")
             return
@@ -883,6 +885,8 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         rather than burning the retry budget. The value is tracked for drift
         detection only after the whole batch has verified.
         """
+        if (self.data or {}).get("_register_profile") == "single_phase":
+            raise HomeAssistantError("Single-phase profile supports monitoring only; controls are disabled")
         # Dry-run is the safety default: never touch the radio, just log intent.
         # Checked first so it works even when the device is momentarily absent.
         if self._dry_run:

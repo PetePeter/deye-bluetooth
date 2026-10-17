@@ -34,6 +34,19 @@ async def async_poll(transport: Transport, *, with_config: bool = False) -> dict
     good telemetry cycle. The caller carries forward the previous config values.
     """
     await transport.handshake()
+    # Real transports can identify the inverter independently of the logger.
+    # Older transport implementations retain their existing legacy contract.
+    identify = getattr(transport, "get_register_profile", None)
+    profile = await identify() if identify is not None else "legacy"
+    if profile == "single_phase":
+        from . import single_phase
+        blocks = {}
+        for start, count in single_phase.READ_BLOCKS:
+            words = await transport.read(start, count)
+            if len(words) != count:
+                raise ValueError(f"short read at {start}: expected {count}, got {len(words)}")
+            blocks[start] = words
+        return single_phase.decode(blocks)
 
     words_by_reg: dict[int, list[int]] = {}
     for start, count in r.READ_BLOCKS:
