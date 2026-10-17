@@ -58,6 +58,7 @@ def test_wrap_write_uses_len_11_and_newline():
 
 def test_handshake_ack_recognised():
     assert p.is_handshake_ack("+ok=21521,21521") is True
+    assert p.is_handshake_ack("+ok=21511,21511") is True
     assert p.is_handshake_ack("+ok=0103020104B817") is False
 
 

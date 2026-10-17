@@ -17,7 +17,10 @@ from __future__ import annotations
 SLAVE = 0x01
 FUNC_READ = 0x03           # read holding registers
 FUNC_WRITE = 0x10          # write multiple registers
-HANDSHAKE_ACK = "+ok=21521,21521"
+HANDSHAKE_ACKS = (
+    "+ok=21521,21521",
+    "+ok=21511,21511",
+)
 
 _OK_PREFIX = "+ok="
 
@@ -113,7 +116,7 @@ def wrap_write(frame: bytes) -> bytes:
 # --- Reply parsing ---------------------------------------------------------
 
 def is_handshake_ack(reply: str) -> bool:
-    return reply.strip() == HANDSHAKE_ACK
+    return reply.strip() in HANDSHAKE_ACKS
 
 
 def _payload(reply: str) -> bytes:
