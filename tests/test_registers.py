@@ -93,17 +93,25 @@ def test_solar_power_block_0x02A0(poll):
     assert poll["solar_power"] == 1783  # 0x02A0
 
 
+def test_pv1_voltage_current_block_0x02A0(poll):
+    assert poll["pv1_voltage"] == pytest.approx(261.1)  # 0x02A4
+    assert poll["pv1_current"] == pytest.approx(6.8)    # 0x02A5
+    # V x A must reproduce the PV power register within rounding.
+    assert poll["pv1_voltage"] * poll["pv1_current"] == pytest.approx(poll["solar_power"], rel=0.01)
+
+
 # --- Full poll coverage ------------------------------------------------------
 
-# The 19 telemetry/control values decode() must produce. daily_consumption is
-# derived in P4 from total_consumption (the 20th sensor key); work_mode is the
-# separate 21st integration value, decoded below as an enum label.
+# The 21 telemetry/control values decode() must produce. daily_consumption is
+# derived in P4 from total_consumption (the 22nd sensor key); work_mode is the
+# separate 23rd integration value, decoded below as an enum label.
 EXPECTED_KEYS = {
     "solar_power", "house_load", "grid_power", "battery_power", "ups_power",
     "battery_soc", "battery_voltage", "battery_temp", "inverter_temp",
     "daily_solar", "total_solar", "total_grid_import", "total_grid_export",
     "total_battery_charge", "total_battery_discharge", "max_sell_power",
     "inverter_power_l1", "inverter_power_l2", "inverter_power_l3",
+    "pv1_voltage", "pv1_current",
 }
 
 

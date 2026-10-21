@@ -33,7 +33,7 @@ READ_BLOCKS: list[tuple[int, int]] = [
     (0x0256, 12),  # 0x0256..0x0261 — grid power (0x025F) + grid frequency (0x0261)
     (0x0270, 16),  # 0x0270..0x027F — inverter output L1-3 + grid voltages 0x0273-0x0275
     (0x0280, 16),  # 0x0280..0x028F — house load / UPS load
-    (0x02A0, 16),  # 0x02A0..0x02AF — PV input power
+    (0x02A0, 16),  # 0x02A0..0x02AF — PV input power + PV1 voltage/current
 ]
 
 # Control registers, read on the slower config cycle (P3).
@@ -147,6 +147,10 @@ _DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
     # Battery
     "battery_soc":             (0x024C, 1,    False, 0),     # %
     "battery_voltage":         (0x024B, 0.01, False, 0),     # V
+    # PV string 1 operating point. High V + low A at a capped output means the
+    # MPPT is backed off (sun available, load-limited); PV2 is unwired here.
+    "pv1_voltage":             (0x02A4, 0.1,  False, 0),     # V
+    "pv1_current":             (0x02A5, 0.1,  False, 0),     # A
     "battery_temp":            (0x024A, 0.1,  False, 1000),  # °C
     "inverter_temp":           (0x021D, 0.1,  False, 1000),  # °C
 
