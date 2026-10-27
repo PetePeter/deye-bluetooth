@@ -23,7 +23,7 @@ ASCII AT commands, `\n`-terminated, over `fec7`; replies arrive as notifications
 on `fed8`.
 
 ```
-Handshake:  AT+DTYPE                       -> +ok=21521,21521
+Handshake:  AT+DTYPE                       -> +ok=<dtype>,<dtype>  (logger model, e.g. 21521, 21511, 21510)
 Read:       AT+INVDATA=8,<modbus_rtu_hex>  -> +ok=<modbus_response_hex>
 Write:      AT+INVDATA=11,<modbus_rtu_hex> -> +ok=<modbus_0x10_ack_hex>
 ```
