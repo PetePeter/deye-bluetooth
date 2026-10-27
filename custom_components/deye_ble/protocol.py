@@ -5,7 +5,7 @@ be unit-tested without hardware. The bleak transport (connect / notify / write)
 lives in transport.py and calls into these helpers.
 
 Wire format (see docs/protocol.md):
-    Handshake  AT+DTYPE\n                      -> +ok=21521,21521
+    Handshake  AT+DTYPE\n                      -> +ok=<dtype>,<dtype>
     Read       AT+INVDATA=8,<modbus func03>\n  -> +ok=<modbus response>
     Write      AT+INVDATA=11,<modbus func10>\n -> +ok=<modbus 0x10 ack>
 
@@ -14,10 +14,14 @@ appended low byte first.
 """
 from __future__ import annotations
 
+import re
+
 SLAVE = 0x01
 FUNC_READ = 0x03           # read holding registers
 FUNC_WRITE = 0x10          # write multiple registers
-HANDSHAKE_ACK = "+ok=21521,21521"
+# The DTYPE reply names the logger model (21521 here; 21511, 21510 reported), not
+# the inverter, so any well-formed +ok=<n>,<n> proves the logger is talking.
+_HANDSHAKE_RE = re.compile(r"\+ok=\d+,\d+")
 
 _OK_PREFIX = "+ok="
 
@@ -113,7 +117,7 @@ def wrap_write(frame: bytes) -> bytes:
 # --- Reply parsing ---------------------------------------------------------
 
 def is_handshake_ack(reply: str) -> bool:
-    return reply.strip() == HANDSHAKE_ACK
+    return _HANDSHAKE_RE.fullmatch(reply.strip()) is not None
 
 
 def _payload(reply: str) -> bytes:

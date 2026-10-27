@@ -56,9 +56,22 @@ def test_wrap_write_uses_len_11_and_newline():
 
 # --- Reply parsing ---------------------------------------------------------
 
-def test_handshake_ack_recognised():
-    assert p.is_handshake_ack("+ok=21521,21521") is True
-    assert p.is_handshake_ack("+ok=0103020104B817") is False
+@pytest.mark.parametrize("reply", [
+    "+ok=21521,21521",
+    "+ok=21511,21511",   # DL1000B-WIFI — issue #2
+    "+ok=21510,21510",   # issue #1
+    " +ok=21521,21521\r\n",
+])
+def test_handshake_accepts_any_logger_dtype(reply):
+    assert p.is_handshake_ack(reply) is True
+
+
+@pytest.mark.parametrize("reply", [
+    "", "+ok=", "+ok=21521", "+ok=abc,def", "+ERR=1",
+    "+ok=0103020104B817",  # a Modbus read reply, not a DTYPE
+])
+def test_handshake_rejects_non_dtype_replies(reply):
+    assert p.is_handshake_ack(reply) is False
 
 
 def test_parse_read_single_register():
