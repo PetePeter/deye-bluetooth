@@ -34,6 +34,11 @@ from .const import (
     DOMAIN,
     MAX_POLL_FAILURES,
     MAX_WRITE_ATTEMPTS,
+    DEFAULT_CLOUD_SYNC_INTERVAL,
+    DEFAULT_CLOUD_WINDOW_DURATION,
+    DEFAULT_FULLY_LOCAL,
+    DEFAULT_BLE_ENABLED,
+    SLOW_TELEMETRY_INTERVAL,
     SYNC_CLOCK_WRONG,
     SYNC_FAILED,
     SYNC_OK,
@@ -59,15 +64,39 @@ _LOGGER = logging.getLogger(__name__)
 # exist optimistically (no read-back until P5 adds TOU reads). All are carried
 # forward across polls so a config value isn't dropped (blanking its entity) on
 # the telemetry-only cycles between config reads.
-_CONFIG_KEYS = ("work_mode", "max_sell_power", "zero_export_power")
-_CARRY_KEYS = _CONFIG_KEYS + (
+_CONFIG_KEYS = (
+    "work_mode",
+    "max_sell_power",
+    "zero_export_power",
+    "max_charge_current",
+    "max_discharge_current",
+    "batt_shutdown_soc",
+    "batt_restart_soc",
+    "batt_low_soc",
+    "grid_charge_current",
+    "smartload_off_soc",
+    "smartload_on_soc",
+)
+_SLOW_KEYS = (
+    "total_solar", "total_grid_import", "total_grid_export",
+    "total_battery_charge", "total_battery_discharge", "total_consumption",
+    "daily_solar", "daily_grid_import", "daily_grid_export", "daily_load_energy",
+    "daily_battery_charge", "daily_battery_discharge",
+    "max_solar_power", "running_status", "inverter_status", "total_load_energy",
+    "dc_temperature", "ac_temperature",
+    "pv1_voltage", "pv1_current", "pv2_voltage", "pv2_current",
+    "battery_temp", "battery_soc_bms", "inverter_temp", "io_mode", "has_fault", "has_alarm", "fault_message", "alarm_message",
+    "grid_voltage_l1", "grid_current_l1", "grid_voltage_l2", "grid_voltage_l3", "grid_frequency",
+    "bms_charge_voltage", "bms_discharge_voltage",
+    "bms_charge_current_limit", "bms_discharge_current_limit",
+    "rated_power", "battery_rated_capacity", "total_dc_input_power", "grid_total_reactive_power",
+)
+_CARRY_KEYS = _CONFIG_KEYS + _SLOW_KEYS + (
     "charge_soc", "discharge_soc", "charge_start", "charge_end",
-    "max_charge_current", "max_discharge_current",
-    "batt_shutdown_soc", "batt_low_soc", "batt_restart_soc",
+    "energy_priority", "solar_sell", "fault_codes", "grid_charge_enabled", "tou_enabled",
+    "smartload_min_solar_power", "gen_peak_shaving_power", "grid_peak_shaving_power",
     "peak_shaving_flags_raw", "grid_peak_shaving", "gen_peak_shaving",
     "gen_peak_power", "grid_peak_power",
-    # Clock + drift are a matched snapshot — carried together so the reported
-    # drift always belongs to the clock reading it was measured against.
     "inverter_clock", "inverter_clock_drift", "inverter_time_of_day_drift",
     "time_sync",
 )
@@ -127,6 +156,17 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # never hold a connection simultaneously, or bleak reports
         # "br-connection-canceled". This lock serializes all BLE sessions.
         self._ble_lock = asyncio.Lock()
+        self._slow_interval = SLOW_TELEMETRY_INTERVAL
+        self._fast_interval = 60
+        self._scan_interval = scan_interval
+        self._last_slow_read = 0.0
+        self._cloud_sync_interval = DEFAULT_CLOUD_SYNC_INTERVAL
+        self._cloud_window_duration = DEFAULT_CLOUD_WINDOW_DURATION
+        self._fully_local = DEFAULT_FULLY_LOCAL
+        self._ble_enabled = DEFAULT_BLE_ENABLED
+        self._last_cloud_sync = time.monotonic()
+        self._cloud_window_active = False
+        self._cloud_window_start = 0.0
 
     @property
     def dry_run(self) -> bool:
@@ -143,6 +183,61 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
     @reassert.setter
     def reassert(self, value: bool) -> None:
         self._reassert = value
+
+    @property
+    def ble_enabled(self) -> bool:
+        return self._ble_enabled
+
+    async def async_set_ble_enabled(self, value: bool) -> None:
+        self._ble_enabled = value
+        if not value:
+            async with self._ble_lock:
+                await self._drop_persistent()
+
+    @property
+    def fully_local(self) -> bool:
+        return self._fully_local
+
+    def set_fully_local(self, value: bool) -> None:
+        self._fully_local = value
+        if value:
+            self._cloud_window_active = False
+
+    @property
+    def cloud_sync_interval(self) -> int:
+        return int(self._cloud_sync_interval)
+
+    def set_cloud_sync_interval(self, value: int) -> None:
+        self._cloud_sync_interval = value
+
+    @property
+    def cloud_window_duration(self) -> int:
+        return int(self._cloud_window_duration)
+
+    def set_cloud_window_duration(self, value: int) -> None:
+        self._cloud_window_duration = value
+
+    @property
+    def scan_interval_seconds(self) -> int:
+        return getattr(self, "_scan_interval", 5)
+
+    def set_scan_interval(self, value: int) -> None:
+        self._scan_interval = max(1, min(10, value))
+        self.update_interval = timedelta(seconds=self._scan_interval)
+
+    @property
+    def fast_interval_seconds(self) -> int:
+        return getattr(self, "_fast_interval", 60)
+
+    def set_fast_interval(self, value: int) -> None:
+        self._fast_interval = max(15, min(300, value))
+
+    @property
+    def slow_interval_seconds(self) -> int:
+        return getattr(self, "_slow_interval", 1800)
+
+    def set_slow_interval(self, value: int) -> None:
+        self._slow_interval = max(300, min(3600, value))
 
     @property
     def keepalive(self) -> bool:
@@ -168,7 +263,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         if pending is not None:
             try:
                 await pending
-            except Exception:  # noqa: BLE001 — already logged by the task
+            except Exception:  # noqa: BLE001 â€” already logged by the task
                 pass
         async with self._ble_lock:
             await self._drop_persistent()
@@ -179,7 +274,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         if transport is not None:
             try:
                 await transport.disconnect()
-            except Exception:  # noqa: BLE001 — teardown is best-effort
+            except Exception:  # noqa: BLE001 â€” teardown is best-effort
                 _LOGGER.debug("dropping persistent BLE link failed", exc_info=True)
 
     @asynccontextmanager
@@ -187,7 +282,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         """Yield a connected transport following the keepalive strategy.
 
         keepalive OFF: open a fresh session and close it on exit (the resilient
-        default — every poll/write reconnects). keepalive ON: connect once and
+        default â€” every poll/write reconnects). keepalive ON: connect once and
         reuse the link across polls and writes, but drop it on any error so the
         next call cleanly reconnects. Callers hold ``_ble_lock`` around this.
         """
@@ -203,7 +298,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         try:
             yield self._persistent
         except Exception:
-            # A reused link that just errored is suspect — drop it rather than
+            # A reused link that just errored is suspect â€” drop it rather than
             # keep handing back a possibly half-open connection.
             await self._drop_persistent()
             raise
@@ -226,15 +321,60 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict:
         try:
+            # Cloud coexistence: the inverter logger shares one processor between
+            # BLE and its Wi-Fi upload to the Deye cloud, so a permanently busy
+            # link starves the cloud feed. While fully-local mode is OFF, give the
+            # logger a scheduled quiet window with no BLE traffic at all.
+            if not self._fully_local and self.data is not None:
+                now = time.monotonic()
+                if self._cloud_window_active:
+                    elapsed = now - self._cloud_window_start
+                    if elapsed < self._cloud_window_duration:
+                        _LOGGER.debug(
+                            "Cloud sync window active (%ds remaining); skipping BLE poll",
+                            int(self._cloud_window_duration - elapsed),
+                        )
+                        return self.data  # keep last telemetry, touch no BLE
+                    self._cloud_window_active = False
+                    self._last_cloud_sync = now
+                    _LOGGER.info("Cloud sync window ended; resuming fast BLE polling")
+                elif now - self._last_cloud_sync >= self._cloud_sync_interval:
+                    self._cloud_window_active = True
+                    self._cloud_window_start = now
+                    _LOGGER.info(
+                        "Starting cloud sync window for %ds (releasing BLE for Wi-Fi upload)",
+                        self._cloud_window_duration,
+                    )
+                    async with self._ble_lock:
+                        await self._drop_persistent()
+                    return self.data
+
             ble_device = self._resolve_device()
 
-            # Decide once per cycle — re-checking after the await could acknowledge
+            # Decide once per cycle â€” re-checking after the await could acknowledge
             # a dirty mark that arrived mid-poll without config actually being read.
             config_due = self._config_due()
 
+            # Fast cycles read only FAST_BLOCKS (the live power/SOC set); every
+            # _slow_interval seconds a full read refreshes lifetime energy,
+            # string volts/amps and temperatures. Those keys are carried forward
+            # between slow reads so their entities never blank out.
+            now = time.monotonic()
+            slow_due = (
+                self._last_slow_read == 0.0
+                or (now - self._last_slow_read) >= self._slow_interval
+            )
+
             async with self._ble_lock:
                 async with self._session(ble_device) as transport:
-                    data = await async_poll(transport, with_config=config_due)
+                    data = await async_poll(
+                        transport, with_config=config_due, full_telemetry=slow_due
+                    )
+
+            # Only remember the slow read once it actually succeeded; a failed
+            # full poll leaves slow_due set so the next cycle retries it.
+            if slow_due:
+                self._last_slow_read = now
         except Exception as e:
             return self._handle_poll_failure(e)
 
@@ -242,7 +382,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         self._consecutive_failures = 0
 
         # Drift is measured against the clock reading it arrived with, BEFORE
-        # the carry-forward below — recomputing it against a carried clock would
+        # the carry-forward below â€” recomputing it against a carried clock would
         # make it grow one second per second between config reads.
         if "inverter_clock" in data:
             measured_at = dt_util.now()
@@ -263,7 +403,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
                     data[key] = prev[key]
 
         # A BLE frame that decodes a lifetime total as 0 must not reach a
-        # total_increasing sensor — HA would log a meter reset and count the
+        # total_increasing sensor â€” HA would log a meter reset and count the
         # recovery as a phantom spike. Hold the last good value instead.
         data = hold_spurious_total_resets(prev, data)
 
@@ -302,7 +442,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Returns the previous data (so entities stay available) until
         *max_failures* consecutive failures accumulate, then re-raises as
         UpdateFailed so a genuine outage surfaces. With no prior data (e.g. the
-        first refresh), the failure propagates immediately — there is nothing to
+        first refresh), the failure propagates immediately â€” there is nothing to
         carry forward.
         """
         self._consecutive_failures += 1
@@ -341,8 +481,8 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         Used where one logical control spans multiple registers (e.g. the
         discharge floor written to every non-charge TOU slot). Reuses the same
-        safety model as :meth:`async_write` — dry-run gate, per-register
-        read-back verify, retry, and drift tracking — but opens just one
+        safety model as :meth:`async_write` â€” dry-run gate, per-register
+        read-back verify, retry, and drift tracking â€” but opens just one
         connection so five slots don't mean five reconnects on a flaky link.
         """
         await self._write_regs(regs)
@@ -374,7 +514,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
                         words = await transport.read(addr, count)
                         for i, w in enumerate(words):
                             lines.append(f"0x{addr + i:04X} {w}")
-                    except Exception as exc:  # noqa: BLE001 — diagnostic, keep going
+                    except Exception as exc:  # noqa: BLE001 â€” diagnostic, keep going
                         lines.append(f"# block 0x{addr:04X}+{count} failed: {exc}")
                     addr += count
         return "\n".join(lines)
@@ -392,12 +532,12 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         (local-deye-cloud/docs/inverter-clock-2026-08-09.md and the observation
         log for 2026-08-13):
 
-        * The sequence ALWAYS ends with Time Sync ON — it does not restore the
+        * The sequence ALWAYS ends with Time Sync ON â€” it does not restore the
           flag to whatever it was. Two reasons. Time Sync off means the logger's
           cloud calibration cannot reach the RTC, which is how the phone app's
           "set time" silently broke the clock in the first place; finding it off
           is a fault to repair, not a preference to preserve. And a final write
-          of a CLEARED bit would itself be a falling edge — a second commit —
+          of a CLEARED bit would itself be a falling edge â€” a second commit â€”
           which, if an error had interrupted the three clock writes, would latch
           a mixture of newly written words and stale ones: a new date against an
           old time, wrong by hours or days. Ending on a rising edge cannot
@@ -405,14 +545,14 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
           handled.
         * The whole sequence runs under ONE lock, so no poll can land inside an
           open commit window. A link that ERRORS is dropped before the next
-          attempt — the exception is caught outside the session context, so
+          attempt â€” the exception is caught outside the session context, so
           keepalive's drop-on-error runs. A verification mismatch is different
           and deliberately keeps the link: the link demonstrably works (we just
           read back through it), the fault is in the write, and reconnect churn
           on this logger has its own history of wedging the radio.
         * The write is not reliable first time (a year byte 0x1A once landed as
           0x7A). The readback is verified by drift against a fresh now, and the
-          target is re-derived on every attempt — never a replayed intent.
+          target is re-derived on every attempt â€” never a replayed intent.
         * A failed re-enable fails the whole call. Cloud calibration really is
           left disabled in that case, and reporting success would reproduce the
           silent failure this feature exists to fix.
@@ -420,15 +560,20 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Deliberately does not go through :meth:`_write_regs`: that path's strict
         read-back equality is right for every other control and wrong for a
         register that ticks while you look at it. The clock is also never added
-        to ``_tracked_values`` — it legitimately changes every second, so
+        to ``_tracked_values`` â€” it legitimately changes every second, so
         reassert would fight the inverter forever.
 
         Raises HomeAssistantError if no attempt verifies, or if the clock landed
         but Time Sync could not be re-enabled.
         """
         if self._dry_run:
-            _LOGGER.info("dry-run: would sync inverter clock (no GATT write issued)")
-            return
+            for reg, value in regs.items():
+                _LOGGER.warning(
+                    "Inverter write blocked (Safety Lock ACTIVE / Dry-Run): Would write reg 0x%04X = %d", reg, value
+                )
+            raise HomeAssistantError(
+                "Inverter write blocked! Turn ON 'Allow Inverter Writes' safety switch before modifying settings."
+            )
 
         ble_device = self._resolve_device()
         pre_flags: int | None = None
@@ -452,15 +597,15 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
                             await transport.handshake()
                             pre_flags = (await transport.read(r.REG_TIME_SYNC, 1))[0]
                             drift = await self._read_drift(transport)
-                    except Exception as exc:  # noqa: BLE001 — unknown means sync
+                    except Exception as exc:  # noqa: BLE001 â€” unknown means sync
                         _LOGGER.warning(
-                            "could not read the clock before deciding (%s) — "
+                            "could not read the clock before deciding (%s) â€” "
                             "syncing rather than assuming", exc,
                         )
                         drift = None
                     # An unreadable drift is NOT a reason to skip. Skipping on
                     # unknown means an inverter we cannot read is an inverter we
-                    # never fix, and it fails silently — the clock stays wrong
+                    # never fix, and it fails silently â€” the clock stays wrong
                     # and nothing reports it. Erring toward the write costs one
                     # unnecessary sync; erring toward the skip costs a clock
                     # nobody corrects. Keep this default through any refactor.
@@ -472,7 +617,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
                         skipped = True
                         _LOGGER.info(
                             "inverter clock drift %+d s clears the %d s threshold "
-                            "even allowing %.0f s of cache staleness — not writing",
+                            "even allowing %.0f s of cache staleness â€” not writing",
                             drift, min_drift, CLOCK_CACHE_MAX_AGE,
                         )
 
@@ -485,7 +630,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
                                 if pre_flags is None:
                                     # The other bits of 0x00E4 belong to the
                                     # System Time panel (AM/PM, Auto Dim, Beep,
-                                    # Factory Reset) — read once and handed back
+                                    # Factory Reset) â€” read once and handed back
                                     # untouched. Never re-read on a later
                                     # attempt: that would capture our own arming
                                     # write as the original.
@@ -496,7 +641,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
                             ever_wrong = ever_wrong or verdict == VERIFY_WRONG
                             if verdict == VERIFY_OK:
                                 break
-                        except Exception as exc:  # noqa: BLE001 — a flaky link earns a retry
+                        except Exception as exc:  # noqa: BLE001 â€” a flaky link earns a retry
                             # Caught OUTSIDE the session context, so a failed
                             # link is dropped before the next attempt.
                             verdict = VERIFY_UNVERIFIED
@@ -519,7 +664,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
                 cancelled = True
                 raise
             finally:
-                # Never raises — see _enable_time_sync. A raise here would
+                # Never raises â€” see _enable_time_sync. A raise here would
                 # replace the exception already unwinding (including a
                 # CancelledError) and skip the outcome record below.
                 enable_error = await self._enable_time_sync(ble_device, pre_flags)
@@ -554,13 +699,13 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         # The drift sensors are a snapshot of the last config read; without this
         # they would still show the pre-sync drift for up to CONFIG_READ_INTERVAL
-        # — long enough for a verifying automation to call a good sync failed.
+        # â€” long enough for a verifying automation to call a good sync failed.
         self.mark_config_dirty()
 
         if enable_error is not None:
             raise HomeAssistantError(
                 "inverter clock was set, but Time Sync could not be re-enabled "
-                f"— cloud clock calibration is left disabled: {enable_error}"
+                f"â€” cloud clock calibration is left disabled: {enable_error}"
             )
 
     async def async_sync_clock_and_refresh(self, min_drift: int | None = None) -> None:
@@ -606,17 +751,17 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         outcome available: nothing else corrects this RTC, so it stays wrong
         until the next scheduled run. But unbounded retrying against a live
         inverter is its own hazard, so this is a few slower attempts under a hard
-        ceiling — and if it ends still wrong, that is reported as its own
+        ceiling â€” and if it ends still wrong, that is reported as its own
         outcome, not folded into a generic failure.
         """
         _LOGGER.warning(
-            "inverter clock is verified WRONG after %d attempt(s) — continuing on "
+            "inverter clock is verified WRONG after %d attempt(s) â€” continuing on "
             "the bounded extension rather than leaving it on a bad date", attempts,
         )
         verdict = VERIFY_WRONG
         # monotonic, not accumulated backoff: the earlier version added up only
         # the sleeps, so it excluded handshakes, BLE waits and up to 30 s of
-        # verification per attempt — i.e. everything that makes an attempt hang,
+        # verification per attempt â€” i.e. everything that makes an attempt hang,
         # which is the case a wall-clock stop exists for. monotonic also cannot
         # be stepped by an NTP correction, which matters in a clock feature.
         deadline = time.monotonic() + CLOCK_KNOWN_BAD_CEILING
@@ -635,7 +780,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
                     await transport.handshake()
                     # Bound the ATTEMPT, not just the wait before it. Checking
                     # the deadline only before sleeping leaves a slow handshake,
-                    # command or read free to run straight past the ceiling —
+                    # command or read free to run straight past the ceiling â€”
                     # which is the exact case a wall-clock stop exists for.
                     verdict = await asyncio.wait_for(
                         self._commit_clock(transport, pre_flags, attempts),
@@ -646,7 +791,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
                         "inverter clock corrected on extension attempt %d", extra
                     )
                     return verdict, attempts
-            except Exception as exc:  # noqa: BLE001 — keep trying, it is still wrong
+            except Exception as exc:  # noqa: BLE001 â€” keep trying, it is still wrong
                 _LOGGER.warning("clock extension attempt %d failed: %s", extra, exc)
                 verdict = VERIFY_UNVERIFIED
 
@@ -655,7 +800,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
     async def _read_drift(self, transport) -> int | None:
         """Drift in seconds from one read, or None if it cannot be decoded.
 
-        Deliberately not a freshness hunt — on a self-ticking register there is
+        Deliberately not a freshness hunt â€” on a self-ticking register there is
         no such test (see :meth:`_verify_commit`). The reading may be up to
         CLOCK_CACHE_MAX_AGE stale, and the caller compensates with a margin
         rather than pretending the number is exact.
@@ -682,18 +827,18 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # Re-derived here, inside the attempt: a retry that replayed the first
         # attempt's target would write a time stale by an attempt.
         #
-        # The frame as it stands BEFORE the write. Not a freshness baseline —
+        # The frame as it stands BEFORE the write. Not a freshness baseline â€”
         # a changed frame proves nothing on a ticking register (see
         # _verify_commit). This is the negative half: a read-back byte-identical
         # to this one cannot be a fresh read of a changed clock, so it proves
         # the logger's cache did not invalidate and the read-back is worthless.
         # Optional, deliberately: this is an extra guard, not a prerequisite.
         # Failing the whole attempt because a diagnostic read failed would make
-        # the feature more brittle than it was before the guard existed — an
+        # the feature more brittle than it was before the guard existed â€” an
         # inverter we cannot read is exactly one whose clock still needs setting.
         try:
             pre_frame = tuple(await transport.read(r.REG_CLOCK, r.CLOCK_WORD_COUNT))
-        except Exception as exc:  # noqa: BLE001 — the guard is best-effort
+        except Exception as exc:  # noqa: BLE001 â€” the guard is best-effort
             _LOGGER.debug("no pre-write frame for the cache guard: %s", exc)
             pre_frame = None
 
@@ -701,7 +846,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # 2026-08-15: single writes corrupt the year byte 4 times in 5, block
         # writes 0 in 5, interleaved so logger drift cannot explain it. See
         # protocol.build_write_block. It also removes partial staging by
-        # construction — there is no longer a gap between register writes for an
+        # construction â€” there is no longer a gap between register writes for an
         # error to land in.
         target = dt_util.now()
         await transport.write_block(r.REG_CLOCK, r.encode_clock(target))
@@ -723,7 +868,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         Not on frame changes: the RTC ticks, so consecutive reads differ whether
         or not the write landed. A probe on 2026-08-15 produced 14 distinct
-        frames across 68 s of a commit that had never taken — change means time
+        frames across 68 s of a commit that had never taken â€” change means time
         passed, and nothing else.
 
         An undecodable frame is UNVERIFIED rather than WRONG. We cannot see what
@@ -736,7 +881,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         if pre_frame is not None and tuple(frame) == pre_frame:
             # The RTC ticks unconditionally, so a byte-identical frame cannot be
-            # a fresh read of a changed clock — the logger served the same cached
+            # a fresh read of a changed clock â€” the logger served the same cached
             # entry across the write. Hardware says the cache does invalidate on
             # a write (32 post-commit frames, two runs, all fresh), so this
             # should never fire; if it ever does, the read-back is meaningless
@@ -775,7 +920,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         Always ON, never "as it was": see :meth:`async_sync_clock`. This is a
         rising edge, which does not latch, so it cannot commit a half-written
-        clock — that is precisely why the policy is safe.
+        clock â€” that is precisely why the policy is safe.
 
         NEVER raises: it is called from a finally during unwinding, so raising
         would replace whatever is already propagating (including a
@@ -783,7 +928,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         On cancellation the write is handed to a task that ACQUIRES THE BLE LOCK
         ITSELF. An earlier version shielded the write instead, which kept it
-        alive but let it run outside the lock — and the logger accepts a single
+        alive but let it run outside the lock â€” and the logger accepts a single
         central, so a background write could collide with a poll or a later
         sync, with its exception observed by nobody. A write that escapes the
         lock is not a smaller problem than one that dies; it is a less visible
@@ -797,16 +942,16 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             return None
         except asyncio.CancelledError as exc:
             _LOGGER.warning(
-                "cancelled while re-enabling Time Sync — retrying it after the "
+                "cancelled while re-enabling Time Sync â€” retrying it after the "
                 "BLE lock is released"
             )
             self._pending_enable = asyncio.ensure_future(
                 self._enable_after_release(ble_device, pre_flags)
             )
             return exc
-        except Exception as exc:  # noqa: BLE001 — reported, never masked
+        except Exception as exc:  # noqa: BLE001 â€” reported, never masked
             _LOGGER.error(
-                "could not re-enable Time Sync (0x%04X) — cloud clock "
+                "could not re-enable Time Sync (0x%04X) â€” cloud clock "
                 "calibration is left disabled: %s", pre_flags, exc,
             )
             return exc
@@ -821,9 +966,9 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         async with self._ble_lock:
             try:
                 await self._write_time_sync_on(ble_device, pre_flags)
-            except Exception:  # noqa: BLE001 — last chance, must be reported
+            except Exception:  # noqa: BLE001 â€” last chance, must be reported
                 _LOGGER.error(
-                    "Time Sync could NOT be re-enabled after a cancelled sync — "
+                    "Time Sync could NOT be re-enabled after a cancelled sync â€” "
                     "cloud clock calibration is left DISABLED", exc_info=True,
                 )
                 self._record_sync_outcome(
@@ -846,13 +991,13 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         The drift sensor cannot serve this purpose: it is a snapshot that is
         carried forward when a config read fails, so it cannot distinguish a
-        verified sync from a stale reading — an automation reading it can alert
+        verified sync from a stale reading â€” an automation reading it can alert
         after a good sync and stay silent after a bad one.
         """
         # The identity of THIS sync, and the only field a verifier should
         # compare. Timestamps cannot serve that purpose here: both sides would
         # come from the wall clock, and an NTP or manual step during the call
-        # can make a fresh result look older than the run that produced it —
+        # can make a fresh result look older than the run that produced it â€”
         # in a feature whose entire subject is clock correction, assuming a
         # monotonic wall clock is the one assumption not available to us.
         self._clock_sync_seq += 1
@@ -860,13 +1005,13 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             "clock_sync_id": self._clock_sync_seq,
             "clock_sync_result": result,
             "clock_sync_attempts": attempts,
-            # Informational only — for humans reading the entity, never the
+            # Informational only â€” for humans reading the entity, never the
             # basis of a pass/fail decision.
             "clock_sync_at": dt_util.now(),
         }
         # Published HERE, not on the next successful poll. The result is known
         # now, and making its visibility contingent on a later read means a poll
-        # failure can bury a verified sync — including the escalation path,
+        # failure can bury a verified sync â€” including the escalation path,
         # where _handle_poll_failure raises UpdateFailed and stamps nothing at
         # all. Listeners are notified directly rather than via
         # async_set_updated_data, which would also reset the refresh schedule.
@@ -879,7 +1024,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         A flaky link can drop a connection or time out mid-write; each attempt
         opens a fresh session and re-issues every register, confirming with a
         read-back. A *readback mismatch* (the inverter clamped/rejected the
-        value) and a *missing device* are not transient — they surface at once
+        value) and a *missing device* are not transient â€” they surface at once
         rather than burning the retry budget. The value is tracked for drift
         detection only after the whole batch has verified.
         """
@@ -887,10 +1032,12 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # Checked first so it works even when the device is momentarily absent.
         if self._dry_run:
             for reg, value in regs.items():
-                _LOGGER.info(
-                    "dry-run: would write reg 0x%04X = %d (no GATT write issued)", reg, value
+                _LOGGER.warning(
+                    "Inverter write blocked (Safety Lock ACTIVE / Dry-Run): Would write reg 0x%04X = %d", reg, value
                 )
-            return
+            raise HomeAssistantError(
+                "Inverter write blocked! Turn ON 'Allow Inverter Writes' safety switch before modifying settings."
+            )
 
         ble_device = async_ble_device_from_address(
             self.hass, self._address, connectable=True
@@ -900,7 +1047,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         for attempt in range(1, self._write_attempts + 1):
             try:
-                # Serialize against the poll — one BLE central at a time.
+                # Serialize against the poll â€” one BLE central at a time.
                 async with self._ble_lock:
                     async with self._session(ble_device) as transport:
                         await transport.handshake()
@@ -910,7 +1057,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
                             verify_readback(reg, value, readback[0])
                 break
             except ValueError:
-                # Read-back mismatch — a retry would only mask an inverter clamp.
+                # Read-back mismatch â€” a retry would only mask an inverter clamp.
                 raise
             except Exception as exc:
                 if attempt >= self._write_attempts:
@@ -928,3 +1075,5 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # Track for drift detection only once the batch has fully verified.
         for reg, value in regs.items():
             self._tracked_values[reg] = value
+
+
