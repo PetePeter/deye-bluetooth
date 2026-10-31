@@ -1,4 +1,4 @@
-"""Binary sensor entities — grid-connection state and clock-sync health."""
+﻿"""Binary sensor entities — grid-connection state and clock-sync health."""
 from __future__ import annotations
 
 from homeassistant.components.binary_sensor import (
@@ -23,6 +23,8 @@ async def async_setup_entry(
     async_add_entities([
         DeyeGridConnected(coordinator, entry),
         DeyeCloudClockSyncEnabled(coordinator, entry),
+        DeyeInverterFaultBinarySensor(coordinator, entry),
+        DeyeInverterAlarmBinarySensor(coordinator, entry),
     ])
 
 
@@ -82,3 +84,58 @@ class DeyeCloudClockSyncEnabled(CoordinatorEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         return (self.coordinator.data or {}).get("time_sync")
+
+
+class DeyeInverterFaultBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Hardware Fault sensor decoded from Modbus registers 103â€“106 (0x0067..0x006A)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Inverter Fault"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_icon = "mdi:alert-circle"
+
+    def __init__(self, coordinator, entry: ConfigEntry):
+        super().__init__(coordinator)
+        sn = entry.data[CONF_LOGGER_SN]
+        self._attr_unique_id = f"{sn}_hardware_fault"
+        self._attr_device_info = _device_info(sn)
+
+    @property
+    def is_on(self) -> bool | None:
+        val = (self.coordinator.data or {}).get("has_fault")
+        return bool(val) if val is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data = self.coordinator.data or {}
+        return {
+            "fault_codes": data.get("fault_codes", []),
+            "fault_message": data.get("fault_message", "OK"),
+        }
+
+
+class DeyeInverterAlarmBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Hardware Warning sensor decoded from Modbus registers 101â€“102 (0x0065..0x0066)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Inverter Warning"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_icon = "mdi:alert"
+
+    def __init__(self, coordinator, entry: ConfigEntry):
+        super().__init__(coordinator)
+        sn = entry.data[CONF_LOGGER_SN]
+        self._attr_unique_id = f"{sn}_hardware_alarm"
+        self._attr_device_info = _device_info(sn)
+
+    @property
+    def is_on(self) -> bool | None:
+        val = (self.coordinator.data or {}).get("has_alarm")
+        return bool(val) if val is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data = self.coordinator.data or {}
+        return {
+            "alarm_message": data.get("alarm_message", "OK"),
+        }
