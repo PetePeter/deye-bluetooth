@@ -8,9 +8,22 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 from . import registers as r
+from .const import (
+    CONF_CONNECTION_MODE,
+    CONF_LIVE_INTERVAL,
+    CONF_READ_ONLY,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
+    LEGACY_CONF_DRY_RUN,
+    LEGACY_CONF_KEEPALIVE,
+    MAX_LIVE_INTERVAL,
+    MIN_LIVE_INTERVAL,
+    MODE_LIVE_LOCAL,
+    MODE_STANDARD,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,57 +38,74 @@ class Transport(Protocol):
 
 # --- Pure async poll (unit-testable with a fake transport) ------------------
 
-async def async_poll(
+async def async_detect_profile(transport: Transport) -> str:
+    """Read the register-0 device type and map it to a register profile."""
+    await transport.handshake()
+    (device_type,) = await transport.read(r.REG_DEVICE_TYPE, 1)
+    return r.profile_from_device_type(device_type)
+
+
+async def async_read_tiers(
     transport: Transport,
     *,
-    with_config: bool = False,
-    profile: str | None = r.PROFILE_THREE_PHASE,
-) -> dict[str, Any]:
-    """Connect, handshake, read all register blocks, decode and return.
+    profile: str = r.PROFILE_THREE_PHASE,
+    tiers=r.ALL_TIERS,
+) -> tuple[dict[str, Any], bool]:
+    """Handshake, read the blocks of *tiers* for *profile* and decode them.
 
-    Telemetry-block read failures propagate (the poll has failed). Control-block
-    reads (only when *with_config*) are non-fatal: a failure is logged and the
-    affected config keys are simply omitted, so a config hiccup never discards a
-    good telemetry cycle. The caller carries forward the previous config values.
+    LIVE and FAST read failures propagate (the poll has failed). SLOW reads are
+    non-fatal: a failure is logged and the affected keys are simply omitted, so
+    a settings hiccup never discards a good telemetry cycle. The caller carries
+    forward values from tiers not read this cycle.
 
-    *profile* selects the register map; ``None`` detects it from the device-type
-    register first. The result carries it as ``device_profile`` so the caller
-    can pass it back and skip the detection read on later polls.
+    Returns ``(data, slow_complete)``: False when any slow block failed, so the
+    caller retries the slow tier instead of acknowledging it.
     """
     await transport.handshake()
 
-    if profile is None:
-        (device_type,) = await transport.read(r.REG_DEVICE_TYPE, 1)
-        profile = r.profile_from_device_type(device_type)
-
     words_by_reg: dict[int, list[int]] = {}
-    if profile == r.PROFILE_SINGLE_PHASE:
-        # Monitoring-only profile: settings are read, never the control blocks.
-        for start, count in r.SP_READ_BLOCKS:
+    slow_complete = True
+    for (start, count), fatal in r.tier_blocks(r.PROFILES[profile], tiers):
+        try:
             words_by_reg[start] = await transport.read(start, count)
-        if with_config:
-            for start, count in r.SP_CONFIG_BLOCKS:
-                try:
-                    words_by_reg[start] = await transport.read(start, count)
-                except Exception as e:  # noqa: BLE001 — config read is best-effort
-                    _LOGGER.debug("config block %d read failed (non-fatal): %s", start, e)
-        data = r.decode_single_phase(words_by_reg)
-        data["device_profile"] = profile
-        return data
+        except Exception as e:  # noqa: BLE001 — slow read is best-effort
+            if fatal:
+                raise
+            slow_complete = False
+            _LOGGER.debug("slow block 0x%04X read failed (non-fatal): %s", start, e)
 
-    for start, count in r.READ_BLOCKS:
-        words_by_reg[start] = await transport.read(start, count)
+    return r.PROFILES[profile].decode(words_by_reg), slow_complete
 
-    if with_config:
-        for start, count in r.CONTROL_BLOCKS:
-            try:
-                words_by_reg[start] = await transport.read(start, count)
-            except Exception as e:  # noqa: BLE001 — config read is best-effort
-                _LOGGER.debug("config block 0x%04X read failed (non-fatal): %s", start, e)
 
-    data = r.decode(words_by_reg)
-    data["device_profile"] = profile
+async def async_poll(transport: Transport, **kwargs) -> dict[str, Any]:
+    """:func:`async_read_tiers` without the slow-completion flag."""
+    data, _slow_complete = await async_read_tiers(transport, **kwargs)
     return data
+
+
+def migrate_options(options: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Upgrade pre-0.2 options, or None when there is nothing to migrate.
+
+    ``dry_run`` becomes ``read_only`` unchanged. ``keepalive`` becomes a
+    connection mode: off is STANDARD; on is LIVE_LOCAL (a held link with no
+    quiet window, as before) polling at the old scan interval, so nothing about
+    an upgraded install's behaviour changes.
+    """
+    if LEGACY_CONF_DRY_RUN not in options and LEGACY_CONF_KEEPALIVE not in options:
+        return None
+    new = dict(options)
+    if LEGACY_CONF_DRY_RUN in new:
+        new.setdefault(CONF_READ_ONLY, new.pop(LEGACY_CONF_DRY_RUN))
+    if LEGACY_CONF_KEEPALIVE in new:
+        if new.pop(LEGACY_CONF_KEEPALIVE):
+            new.setdefault(CONF_CONNECTION_MODE, MODE_LIVE_LOCAL)
+            interval = new.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+            new.setdefault(
+                CONF_LIVE_INTERVAL, max(MIN_LIVE_INTERVAL, min(MAX_LIVE_INTERVAL, interval))
+            )
+        else:
+            new.setdefault(CONF_CONNECTION_MODE, MODE_STANDARD)
+    return new
 
 
 # --- Grid-connection inference ----------------------------------------------
@@ -264,15 +294,25 @@ def verify_readback(reg: int, expected: int, actual: int) -> None:
 
 # --- Drift detection (for local-wins reassert) ----------------------------
 
+# Enum controls: tracked as the raw register int, decoded as a label.
+_ENUM_LABELS: dict[str, dict[int, str]] = {
+    "work_mode": r.WORK_MODE_LABELS,
+    "energy_pattern": r.SP_ENERGY_PATTERNS,
+    "io_mode": r.SP_IO_MODES,
+}
+
+
 def detect_drift(
     tracked: dict[int, int | str],
     current: dict[str, float | int | str],
+    reg_to_key: Mapping[int, str] | None = None,
 ) -> list[tuple[int, int | str]]:
     """Compare last HA-set register values against current device values.
 
     Tracked values are the raw ints passed to ``async_write``.  For comparison,
-    work-mode ints are converted to their decoded string label (matching what
-    ``registers.decode`` returns).  Other registers stay as ints.
+    enum ints (work mode etc.) are converted to their decoded string label.
+    Other registers stay as ints. *reg_to_key* maps the profile's control
+    registers to data keys; the default is the three-phase map.
 
     Returns a list of ``(register, raw_tracked_value)`` pairs that have drifted.
     Registers not in the control set are ignored.  Missing keys in *current*
@@ -280,17 +320,14 @@ def detect_drift(
     """
     drifted: list[tuple[int, int | str]] = []
     for reg, expected in tracked.items():
-        key = register_to_key(reg)
+        key = (reg_to_key or _REG_TO_KEY).get(reg)
         if key is None:
             continue
         if key not in current:
             continue
-        # Work-mode: tracked is a raw int (0, 1, 2), current is a string label.
         compare_val = expected
-        if reg == r.REG_WORK_MODE and isinstance(expected, int):
-            compare_val = r.WORK_MODE_LABELS.get(
-                expected, f"Unknown ({expected})"
-            )
+        if key in _ENUM_LABELS and isinstance(expected, int):
+            compare_val = _ENUM_LABELS[key].get(expected, f"Unknown ({expected})")
         if current[key] != compare_val:
             drifted.append((reg, expected))
     return drifted

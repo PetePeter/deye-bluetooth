@@ -1,10 +1,10 @@
-"""Switch entities — peak-shaving enable toggles.
+"""Switch entities — the read-only lock, peak shaving, single-phase toggles.
 
-Grid and generator peak-shaving enables both live in the packed 0x00B2
-Advanced-Function-1 bitfield, alongside other (unmapped) function bits. Each
-toggle therefore read-modify-writes: it takes the last-polled raw word, flips
-only its own bit, and writes the whole register back — so enabling grid shaving
-never disturbs the generator bit (or anything else in 0x00B2).
+Grid and generator peak-shaving enables (three-phase) both live in the packed
+0x00B2 Advanced-Function-1 bitfield, alongside other (unmapped) function bits.
+Each toggle therefore read-modify-writes: it takes the last-polled raw word,
+flips only its own bit, and writes the whole register back — so enabling grid
+shaving never disturbs the generator bit (or anything else in 0x00B2).
 """
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_LOGGER_SN, DEVICE_NAME, DOMAIN
+from .const import CONF_LOGGER_SN, CONF_READ_ONLY, DEFAULT_READ_ONLY, DOMAIN
+from .entity import OptionEntity, device_info
 from .registers import (
     GEN_PEAK_SHAVE_MASK,
     GRID_PEAK_SHAVE_MASK,
@@ -33,22 +33,82 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    if coordinator.read_only:
-        return  # single-phase map is monitoring-only: no control entities
     sn = entry.data[CONF_LOGGER_SN]
-    async_add_entities([
-        DeyeGridPeakShaving(coordinator, entry, sn),
-        DeyeGenPeakShaving(coordinator, entry, sn),
-    ])
+    entities: list[SwitchEntity] = [DeyeReadOnlySwitch(coordinator, entry)]
+    if coordinator.is_single_phase:
+        controls = coordinator.register_profile.controls
+        entities += [
+            DeyeRegisterSwitch(coordinator, sn, key, name, icon)
+            for key, name, icon in SINGLE_PHASE_SWITCHES
+            if key in controls
+        ]
+    else:
+        entities += [
+            DeyeGridPeakShaving(coordinator, entry, sn),
+            DeyeGenPeakShaving(coordinator, entry, sn),
+        ]
+    async_add_entities(entities)
 
 
-def _device_info(sn: str) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={(DOMAIN, sn)},
-        name=DEVICE_NAME,
-        manufacturer="Deye",
-        model=sn,
-    )
+# (data key, name, icon) — plain 0/1 enable registers on the single-phase map.
+SINGLE_PHASE_SWITCHES: list[tuple[str, str, str]] = [
+    ("grid_charge_enabled", "Grid Charging", "mdi:transmission-tower-import"),
+    ("solar_sell_enabled", "Solar Sell", "mdi:transmission-tower-export"),
+]
+
+
+class DeyeReadOnlySwitch(OptionEntity, SwitchEntity):
+    """The read-only lock. ON (the default) refuses every inverter write."""
+
+    _option = CONF_READ_ONLY
+    _default = DEFAULT_READ_ONLY
+    _attr_name = "Read Only"
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.option_value)
+
+    @property
+    def icon(self) -> str:
+        return "mdi:lock" if self.is_on else "mdi:lock-open-variant"
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self.async_set_option(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self.async_set_option(False)
+
+
+class DeyeRegisterSwitch(CoordinatorEntity, SwitchEntity):
+    """A whole-register 0/1 enable, written through the read-only lock."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = SwitchDeviceClass.SWITCH
+
+    def __init__(self, coordinator, sn: str, key: str, name: str, icon: str):
+        super().__init__(coordinator)
+        self._key = key
+        self._attr_name = name
+        self._attr_icon = icon
+        self._attr_unique_id = f"{sn}_{key}"
+        self._attr_device_info = device_info(sn)
+
+    @property
+    def is_on(self) -> bool | None:
+        val = (self.coordinator.data or {}).get(self._key)
+        return bool(val) if val is not None else None
+
+    async def _async_set(self, on: bool) -> None:
+        reg = self.coordinator.register_profile.controls[self._key]
+        await self.coordinator.async_write(reg, int(on))
+        self.coordinator.async_set_updated_data({**(self.coordinator.data or {}), self._key: on})
+        self.coordinator.mark_config_dirty()
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self._async_set(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self._async_set(False)
 
 
 class _PeakShaveSwitch(CoordinatorEntity, SwitchEntity):
@@ -67,7 +127,7 @@ class _PeakShaveSwitch(CoordinatorEntity, SwitchEntity):
     def __init__(self, coordinator, entry: ConfigEntry, sn: str):
         super().__init__(coordinator)
         self._attr_unique_id = f"{sn}_{self._data_key}"
-        self._attr_device_info = _device_info(sn)
+        self._attr_device_info = device_info(sn)
 
     @property
     def is_on(self) -> bool | None:

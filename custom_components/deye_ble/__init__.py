@@ -7,19 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from .const import (
-    CONF_ADDRESS,
-    CONF_DRY_RUN,
-    CONF_KEEPALIVE,
-    CONF_LOGGER_SN,
-    CONF_REASSERT,
-    CONF_SCAN_INTERVAL,
-    DEFAULT_DRY_RUN,
-    DEFAULT_KEEPALIVE,
-    DEFAULT_REASSERT,
-    DEFAULT_SCAN_INTERVAL,
-    DOMAIN,
-)
+from .const import CONF_ADDRESS, CONF_LOGGER_SN, CONF_PROFILE, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,33 +29,41 @@ async def async_setup_entry(hass, entry) -> bool:
         from .transport import DeyeBleTransport
         return DeyeBleTransport(ble_device)
 
+    from homeassistant.exceptions import ConfigEntryNotReady
+
     from .coordinator import DeyeBleCoordinator
-    options = entry.options
+    from .helpers import migrate_options
+
+    if (migrated := migrate_options(entry.options)) is not None:
+        hass.config_entries.async_update_entry(entry, options=migrated)
+
+    from . import registers as r
+
     coordinator = DeyeBleCoordinator(
-        hass,
-        address=address,
-        transport_factory=_make_transport,
-        scan_interval=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-        dry_run=options.get(CONF_DRY_RUN, DEFAULT_DRY_RUN),
-        reassert=options.get(CONF_REASSERT, DEFAULT_REASSERT),
-        keepalive=options.get(CONF_KEEPALIVE, DEFAULT_KEEPALIVE),
+        hass, address=address, transport_factory=_make_transport,
+        profile=entry.data.get(CONF_PROFILE, r.PROFILE_THREE_PHASE),
     )
+    await coordinator.async_apply_options(entry.options)
+
+    # The register map is detected ONCE and cached in entry.data; re-adding the
+    # device re-detects. Entries from before profiles existed detect here.
+    if CONF_PROFILE not in entry.data:
+        try:
+            profile = await coordinator.async_detect_profile()
+        except Exception as exc:  # noqa: BLE001 — HA retries setup later
+            raise ConfigEntryNotReady(f"could not read the inverter type: {exc}") from exc
+        _LOGGER.info("Detected %s register map for %s", profile, logger_sn)
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_PROFILE: profile}
+        )
 
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     async def _on_options_update(hass, entry):
-        from datetime import timedelta
-        coordinator.dry_run = entry.options.get(CONF_DRY_RUN, DEFAULT_DRY_RUN)
-        coordinator.reassert = entry.options.get(CONF_REASSERT, DEFAULT_REASSERT)
-        coordinator.update_interval = timedelta(
-            seconds=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-        )
-        # Releases the held BLE link immediately when keepalive is switched off.
-        await coordinator.async_set_keepalive(
-            entry.options.get(CONF_KEEPALIVE, DEFAULT_KEEPALIVE)
-        )
+        await coordinator.async_apply_options(entry.options)
+        coordinator.async_update_listeners()  # option entities reflect the change
 
     entry.async_on_unload(entry.add_update_listener(_on_options_update))
 

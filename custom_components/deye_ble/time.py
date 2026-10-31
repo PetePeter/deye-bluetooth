@@ -6,11 +6,11 @@ from datetime import time as dt_time
 from homeassistant.components.time import TimeEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_LOGGER_SN, DEVICE_NAME, DOMAIN
+from .const import CONF_LOGGER_SN, DOMAIN
+from .entity import device_info
 from .registers import REG_TOU_SLOT2_START, REG_TOU_SLOT3_START, encode_hhmm
 
 
@@ -18,21 +18,13 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    if coordinator.read_only:
-        return  # single-phase map is monitoring-only: no control entities
+    if coordinator.is_single_phase:
+        return  # charge window = the three-phase TOU slot 2/3 registers
     async_add_entities([
         DeyeChargeWindowTime(coordinator, entry, "start"),
         DeyeChargeWindowTime(coordinator, entry, "end"),
     ])
 
-
-def _device_info(sn: str) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={(DOMAIN, sn)},
-        name=DEVICE_NAME,
-        manufacturer="Deye",
-        model=sn,
-    )
 
 
 _SLOT_REGISTER = {
@@ -57,7 +49,7 @@ class DeyeChargeWindowTime(CoordinatorEntity, TimeEntity):
             "mdi:battery-charging" if which == "start"
             else "mdi:battery-charging-outline"
         )
-        self._attr_device_info = _device_info(sn)
+        self._attr_device_info = device_info(sn)
 
     @property
     def native_value(self) -> dt_time | None:

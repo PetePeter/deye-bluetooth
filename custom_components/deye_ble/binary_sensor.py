@@ -8,11 +8,11 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_LOGGER_SN, DEVICE_NAME, DOMAIN
+from .const import CONF_LOGGER_SN, DOMAIN
+from .entity import device_info
 from .helpers import infer_grid_connected
 
 
@@ -20,11 +20,13 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    if coordinator.read_only:
-        # Single-phase: relays, problem flags and read-only setting switches;
-        # Time Sync is not read on this map.
+    if coordinator.is_single_phase:
+        # Single-phase: relays, problem flags and setting flags without a
+        # switch; Time Sync is not read on this map.
+        controls = coordinator.register_profile.controls
         async_add_entities([DeyeGridConnected(coordinator, entry)] + [
-            DeyeFlag(coordinator, entry, *row) for row in SINGLE_PHASE_FLAGS
+            DeyeFlag(coordinator, entry, *row)
+            for row in SINGLE_PHASE_FLAGS if row[0] not in controls
         ])
         return
     async_add_entities([
@@ -44,14 +46,6 @@ SINGLE_PHASE_FLAGS: list[tuple] = [
 ]
 
 
-def _device_info(sn: str) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={(DOMAIN, sn)},
-        name=DEVICE_NAME,
-        manufacturer="Deye",
-        model=sn,
-    )
-
 
 class DeyeGridConnected(CoordinatorEntity, BinarySensorEntity):
     """On-grid state, inferred from whether any grid phase is energised.
@@ -69,7 +63,7 @@ class DeyeGridConnected(CoordinatorEntity, BinarySensorEntity):
         super().__init__(coordinator)
         sn = entry.data[CONF_LOGGER_SN]
         self._attr_unique_id = f"{sn}_grid_connected"
-        self._attr_device_info = _device_info(sn)
+        self._attr_device_info = device_info(sn)
 
     @property
     def is_on(self) -> bool | None:
@@ -95,7 +89,7 @@ class DeyeCloudClockSyncEnabled(CoordinatorEntity, BinarySensorEntity):
         super().__init__(coordinator)
         sn = entry.data[CONF_LOGGER_SN]
         self._attr_unique_id = f"{sn}_time_sync"
-        self._attr_device_info = _device_info(sn)
+        self._attr_device_info = device_info(sn)
 
     @property
     def is_on(self) -> bool | None:
@@ -118,7 +112,7 @@ class DeyeFlag(CoordinatorEntity, BinarySensorEntity):
             self._attr_icon = icon
         if diagnostic:
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_device_info = _device_info(sn)
+        self._attr_device_info = device_info(sn)
 
     @property
     def is_on(self) -> bool | None:

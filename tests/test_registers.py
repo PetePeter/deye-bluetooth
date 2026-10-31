@@ -154,7 +154,7 @@ def test_zero_export_power_decode_signed():
 def test_zero_export_power_block_is_polled():
     # 0x0068 must fall inside a CONTROL_BLOCKS read so native_value tracks the device.
     assert any(
-        start <= 0x0068 < start + count for start, count in r.CONTROL_BLOCKS
+        start <= 0x0068 < start + count for start, count in r.SLOW_BLOCKS
     )
 
 
@@ -174,7 +174,7 @@ def test_max_charge_current_block_is_polled():
     # the live value; 0x006C..0x006D must fall inside one polled block.
     assert any(
         start <= 0x006C and 0x006D < start + count
-        for start, count in r.CONTROL_BLOCKS
+        for start, count in r.SLOW_BLOCKS
     )
 
 
@@ -194,7 +194,7 @@ def test_battery_threshold_block_is_polled():
     # The three SOC thresholds must be inside one polled block.
     for reg in (0x0073, 0x0074, 0x0075):
         assert any(
-            start <= reg < start + count for start, count in r.CONTROL_BLOCKS
+            start <= reg < start + count for start, count in r.SLOW_BLOCKS
         ), f"0x{reg:04X} not polled"
 
 
@@ -301,7 +301,7 @@ def test_peak_shave_block_is_polled():
     # Flags + both power regs must fall inside one polled control block.
     for reg in (0x00B2, 0x00BE, 0x00BF):
         assert any(
-            start <= reg < start + count for start, count in r.CONTROL_BLOCKS
+            start <= reg < start + count for start, count in r.SLOW_BLOCKS
         ), f"0x{reg:04X} not polled"
 
 

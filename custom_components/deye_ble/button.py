@@ -5,19 +5,17 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_LOGGER_SN, DEVICE_NAME, DOMAIN
+from .const import CONF_LOGGER_SN, DOMAIN
+from .entity import device_info
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    if coordinator.read_only:
-        return  # single-phase map is monitoring-only: no control entities
     async_add_entities([DeyeSyncClockButton(coordinator, entry)])
 
 
@@ -45,12 +43,7 @@ class DeyeSyncClockButton(CoordinatorEntity, ButtonEntity):
         super().__init__(coordinator)
         sn = entry.data[CONF_LOGGER_SN]
         self._attr_unique_id = f"{sn}_sync_clock"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, sn)},
-            name=DEVICE_NAME,
-            manufacturer="Deye",
-            model=sn,
-        )
+        self._attr_device_info = device_info(sn)
 
     async def async_press(self) -> None:
         await self.coordinator.async_sync_clock_and_refresh()

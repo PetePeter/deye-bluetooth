@@ -26,13 +26,18 @@
       "init": {
         "title": "Deye BLE options",
         "data": {
-          "scan_interval": "Telemetry poll interval (seconds)",
-          "dry_run": "Dry run (log writes without touching the inverter)",
-          "reassert": "Reassert local values on drift",
-          "keepalive": "Keep the Bluetooth connection open"
+          "read_only": "Read only (block every inverter write)",
+          "connection_mode": "Connection mode",
+          "scan_interval": "Standard poll interval (seconds)",
+          "live_interval": "Live poll interval (seconds)",
+          "slow_interval": "Slow tier interval (seconds): settings, clock, BMS limits",
+          "cloud_sync_interval": "Live + Deye Cloud: quiet window every (seconds)",
+          "cloud_window": "Live + Deye Cloud: quiet window length (seconds)",
+          "reassert": "Reassert local values on drift"
         },
         "data_description": {
-          "keepalive": "Reuse a single BLE link instead of reconnecting every poll. Reduces the reconnect churn that can hang the logger, but holds an ESP proxy connection slot and blocks the phone app (one central at a time). Leave off unless Home Assistant owns the Bluetooth link."
+          "read_only": "On by default. While on, every setting change and clock sync is refused with an error and the entity keeps the inverter's value.",
+          "connection_mode": "Standard reconnects every poll and leaves the logger's radio free for Deye Cloud. Live holds one link and polls fast: 'with Deye Cloud' releases it for a quiet window so the cloud upload keeps working; 'local only' never does, and Deye Cloud stops updating. A held link also occupies an ESP proxy slot and blocks the phone app."
         }
       }
     }

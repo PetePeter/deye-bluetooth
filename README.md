@@ -96,15 +96,56 @@ The **logger serial number** (e.g. `DEYE00000001`) is the BLE advertised name
 printed on the logger stick. It becomes the config entry's unique identifier and
 drives all entity unique IDs.
 
-### Options (dry-run & reassert)
+### Inverter profile
+
+On first setup the integration reads register 0 (device type) once and stores
+the result in the config entry: `0x0003` selects the **single-phase** map
+(SUN-xK-SG0xLP1), anything else the **three-phase** map. Polls and writes never
+re-detect; re-adding the device does. Each profile has its own register map and
+its own control table, so a control exists only where its register is known.
+
+### Options
 
 After setup, **Settings → Devices & Services → Deye Bluetooth (Local) → Options**
-exposes two safety toggles:
+(the same settings are also CONFIG entities on the device page):
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| **Dry Run** | ON | Blocks all GATT writes; logs what *would* be written. No values are sent to the inverter. |
+| **Read Only** | ON | Refuses every inverter write and clock sync with an error; the entity keeps the inverter's value. Also the `Read Only` switch. |
+| **Connection Mode** | Standard | See below. Also the `Connection Mode` select. |
+| **Standard poll interval** | 60 s | Poll interval in Standard mode (30–600 s). |
+| **Live poll interval** | 5 s | Poll interval in both Live modes (2–60 s). |
+| **Slow poll interval** | 300 s | Slow tier (settings, clock, BMS limits, lifetime info), 300–3600 s. |
+| **Cloud quiet window every / length** | 300 s / 30 s | Live + Deye Cloud only. |
 | **Reassert** | OFF | If a cloud/app write changes a register that HA last set, re-apply the HA value on the next poll cycle. |
+
+Installs from before 0.2 are migrated: `dry_run` becomes `read_only`, keepalive
+off becomes Standard, keepalive on becomes Live local only at the old interval.
+
+### Connection modes and polling tiers
+
+| Mode | BLE link | Live tier | Deye Cloud |
+|------|----------|-----------|------------|
+| **Standard** | reconnect each poll | standard interval (60 s) | unaffected — the logger radio is idle between polls |
+| **Live, with Deye Cloud** | held | live interval (5 s) | the link is released for a quiet window so the logger can upload |
+| **Live, local only** | held | live interval (5 s) | stops updating — the held link starves the logger's Wi-Fi |
+
+A held link also occupies an ESP proxy slot and blocks the phone app (the
+logger accepts one central at a time).
+
+Every mode reads three tiers: **live** (power flow, SOC, voltages) every poll,
+**fast** (daily energy, temperatures, PV strings, faults) every 60 s (or
+every poll, when the poll interval is longer), and
+**slow** (settings, clock, BMS limits) on the slow interval or right after a
+write. Values from tiers not read in a cycle carry forward.
+
+```mermaid
+flowchart LR
+    P[Poll] --> L[Live blocks]
+    P -->|60 s since last| F[Fast blocks]
+    P -->|slow interval or write| S[Slow blocks, best-effort]
+    P -->|Live + Cloud, window open| Q[Release link, keep last values]
+```
 
 ## Safety model
 
@@ -113,8 +154,8 @@ approach:
 
 ```mermaid
 flowchart TD
-    A[Entity setter called] --> B{Dry run ON?}
-    B -- Yes --> C[Log intent, skip GATT write]
+    A[Entity setter called] --> B{Read Only ON?}
+    B -- Yes --> C[Raise error, nothing sent, entity keeps inverter value]
     B -- No --> D[Write register via BLE]
     D --> E[Read back the register]
     E --> F{Matches?}
@@ -122,9 +163,9 @@ flowchart TD
     F -- No --> H[Raise ReadbackError]
 ```
 
-1. **Dry-run default** — all writes are blocked until the user explicitly
-   disables dry-run in the integration options. This means the integration
-   installs as **read-only** by default.
+1. **Read-only default** — all writes and clock syncs are refused until the
+   user turns off `Read Only` (switch or options). A refused write raises an
+   error in the UI rather than pretending to have worked.
 2. **Read-back verify** — every write is followed by an immediate register
    read. If the read-back doesn't match, a `ReadbackError` is raised and the
    optimistic entity update is reverted.
@@ -198,6 +239,23 @@ flowchart TD
 | `time` | Grid Charge From | `0x0095` | Charge window start time |
 | `time` | Grid Charge To | `0x0096` | Charge window end time |
 
+All of the above are three-phase. On the **single-phase** profile the controls
+use that map's registers (write/read-back verified on a SUN-8K-SG01LP1):
+
+| Platform | Entity | Register |
+|----------|--------|----------|
+| `number` | Zero Export Power / Max Charge Current / Max Discharge Current | 206 / 210 / 211 |
+| `number` | Battery Shutdown / Restart / Low SOC | 217 / 218 / 219 |
+| `number` | Grid Charge Current | 230 |
+| `number` | Max Sell Power | 245 |
+| `number` | Gen / Grid Peak Shave Power | 292 / 293 |
+| `select` | Energy Pattern / Work Mode / GEN Port Mode | 243 / 244 / 235 |
+| `switch` | Grid Charging / Solar Sell | 232 / 247 |
+| `button` | Sync Clock | 22–24, one block write; no Time Sync edge (unverified on this map) |
+
+Every profile also gets the CONFIG entities `Read Only`, `Connection Mode` and
+the poll-interval numbers.
+
 ### Intentionally not implemented
 
 | Entity | Reason |
@@ -209,7 +267,7 @@ flowchart TD
 | Service | Description |
 |---------|-------------|
 | `deye_ble.dump_registers` | Diagnostic read-only sweep of holding registers to `/config/deye_register_dump.txt`. Args: `start`, `end`, `block`. |
-| `deye_ble.sync_clock` | Sets the inverter RTC to HA's local time, then refreshes so the entities reflect the result before the call returns. Optional `min_drift` (seconds) makes it a check that only writes when drift exceeds the threshold; called without it, it always syncs. Honours dry-run. |
+| `deye_ble.sync_clock` | Sets the inverter RTC to HA's local time, then refreshes so the entities reflect the result before the call returns. Optional `min_drift` (seconds) makes it a check that only writes when drift exceeds the threshold; called without it, it always syncs. Refused while Read Only is on. |
 
 `sync_clock` is a sequence, not a write: the RTC commits its staged registers
 only when Time Sync (`0x00E4` bit 0) falls from on to off.

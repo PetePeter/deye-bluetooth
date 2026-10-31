@@ -10,7 +10,12 @@ from datetime import datetime
 import pytest
 
 from custom_components.deye_ble import registers as r
-from custom_components.deye_ble.helpers import async_poll, infer_grid_connected
+from custom_components.deye_ble import protocol as p
+from custom_components.deye_ble.helpers import (
+    async_detect_profile,
+    async_poll,
+    infer_grid_connected,
+)
 
 DEVICE_TYPE = 0x0003
 
@@ -47,7 +52,7 @@ def test_device_type_selects_single_phase():
     assert r.profile_from_device_type(0x0005) == r.PROFILE_THREE_PHASE
 
 
-@pytest.mark.parametrize("blocks", [r.SP_READ_BLOCKS, r.SP_CONFIG_BLOCKS])
+@pytest.mark.parametrize("blocks", [r.SP_LIVE_BLOCKS + r.SP_FAST_BLOCKS + r.SP_SLOW_BLOCKS])
 def test_blocks_fit_ble_reads_and_do_not_overlap(blocks):
     covered = set()
     for start, count in blocks:
@@ -188,19 +193,34 @@ class _Transport:
 
 
 @pytest.mark.asyncio
-async def test_poll_detects_profile_and_reads_settings_on_config_cycle():
+async def test_detect_profile_reads_only_the_device_type():
     t = _Transport()
-    data = await async_poll(t, with_config=True, profile=None)
-    assert data["device_profile"] == r.PROFILE_SINGLE_PHASE
-    assert t.reads == [(r.REG_DEVICE_TYPE, 1)] + r.SP_READ_BLOCKS + r.SP_CONFIG_BLOCKS
+    assert await async_detect_profile(t) == r.PROFILE_SINGLE_PHASE
+    assert t.reads == [(r.REG_DEVICE_TYPE, 1)]
+
+
+@pytest.mark.asyncio
+async def test_full_poll_reads_every_tier_and_never_the_device_type():
+    t = _Transport()
+    data = await async_poll(t, profile=r.PROFILE_SINGLE_PHASE)
+    assert t.reads == r.SP_LIVE_BLOCKS + r.SP_FAST_BLOCKS + r.SP_SLOW_BLOCKS
     assert data["battery_capacity"] == 314
 
 
 @pytest.mark.asyncio
-async def test_poll_with_known_profile_skips_detection_and_settings():
+async def test_live_only_poll_reads_live_blocks():
     t = _Transport()
-    await async_poll(t, profile=r.PROFILE_SINGLE_PHASE)
-    assert t.reads == r.SP_READ_BLOCKS
+    data = await async_poll(t, profile=r.PROFILE_SINGLE_PHASE, tiers={r.TIER_LIVE})
+    assert t.reads == r.SP_LIVE_BLOCKS
+    # The live set is what a 5 s dashboard needs.
+    assert {"battery_soc", "battery_power", "grid_power", "house_load", "solar_power"} <= data.keys()
+
+
+def test_every_single_phase_control_reads_back_on_the_slow_tier():
+    # A control whose register is never polled would show a value it cannot see.
+    for key, reg in r.PROFILES[r.PROFILE_SINGLE_PHASE].controls.items():
+        assert any(start <= reg < start + n for start, n in r.SP_SLOW_BLOCKS), key
+        assert key in _decode(), key
 
 
 @pytest.mark.asyncio
@@ -211,5 +231,36 @@ async def test_settings_read_failure_keeps_telemetry():
                 raise TimeoutError
             return await super().read(address, count)
 
-    data = await async_poll(Flaky(), with_config=True, profile=r.PROFILE_SINGLE_PHASE)
+    data = await async_poll(Flaky(), profile=r.PROFILE_SINGLE_PHASE)
     assert data["battery_soc"] == 52 and "battery_capacity" not in data
+
+
+# --- SUN-6K-SG04LP1-EU capture (PR #3, logger reply 21511) --------------------
+# Raw +ok= frames at the app's block starts, which differ from ours: the decoder
+# looks registers up by address, so any covering blocks decode the same.
+SUN6K_FRAMES = {
+    76: "+ok=01030800460000987C138B11FC",
+    108: "+ok=01030A00470B3D0013001500000A32",
+    150: "+ok=01030A09D3000009D3000009D4FEE8",
+    164: "+ok=01032000B400000008002400000024000000000000018F0000018F01B3000001B301B3D810",
+    180: "+ok=01031E000009DA04E216AA006401B30217000000000000FFC4FF97138D138D00018EDC",
+}
+
+
+@pytest.mark.parametrize("key,expected", [
+    ("battery_voltage", 58.02),
+    ("battery_soc", 100),
+    ("battery_temp", 25.0),
+    ("battery_power", -60),
+    ("solar_power", 535),
+    ("house_load", 435),
+    ("grid_power", 36),
+    ("inverter_output_power", 399),
+    ("grid_voltage", 251.5),
+    ("grid_frequency", 50.03),
+    ("daily_solar", 7.1),
+    ("daily_grid_import", 7.0),
+])
+def test_sun6k_capture_decodes(key, expected):
+    words = {start: p.parse_read(frame) for start, frame in SUN6K_FRAMES.items()}
+    assert r.decode_single_phase(words)[key] == expected

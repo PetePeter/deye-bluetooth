@@ -16,13 +16,13 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.const import EntityCategory
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_LOGGER_SN, DEVICE_NAME, DOMAIN, SYNC_RESULTS
+from .const import CONF_LOGGER_SN, DOMAIN, SYNC_RESULTS
+from .entity import device_info
 from .helpers import daily_calc
 from .registers import active_tou_slot
 
@@ -113,8 +113,8 @@ SINGLE_PHASE_SENSORS: list[tuple] = [
     ("fault", "Inverter Fault", None, None, None, "mdi:alert-octagon-outline", None),
 ]
 
-# Single-phase settings, read on the slow cycle and shown as diagnostics: the
-# profile is monitoring-only, so these are values to look at, not controls.
+# Single-phase settings, read on the slow tier and shown as diagnostics. Any
+# with a control entity (registers.PROFILES) is shown by that entity instead.
 SINGLE_PHASE_SETTINGS: list[tuple] = [
     ("inverter_serial", "Inverter Serial", None, None, None, "mdi:identifier", None),
     ("firmware_control", "Control Board Firmware", None, None, None, "mdi:chip", None),
@@ -163,11 +163,17 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    if coordinator.read_only:
+    if coordinator.is_single_phase:
+        # Settings that have a control entity are shown by that entity instead.
+        controls = coordinator.register_profile.controls
         entities = [DeyeSensor(coordinator, entry, *row) for row in SINGLE_PHASE_SENSORS]
-        entities += [DeyeSettingSensor(coordinator, entry, *row) for row in SINGLE_PHASE_SETTINGS]
+        entities += [
+            DeyeSettingSensor(coordinator, entry, *row)
+            for row in SINGLE_PHASE_SETTINGS if row[0] not in controls
+        ]
         entities.append(DeyeTouScheduleSensor(coordinator, entry))
         entities.append(DeyeInverterClockSensor(coordinator, entry))
+        entities.append(DeyeClockSyncResultSensor(coordinator, entry))
         entities.append(DeyeClockDriftSensor(coordinator, entry))
         async_add_entities(entities)
         return
@@ -179,14 +185,6 @@ async def async_setup_entry(
     entities.append(DeyeClockTimeOfDayDriftSensor(coordinator, entry))
     async_add_entities(entities)
 
-
-def _device_info(sn: str) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={(DOMAIN, sn)},
-        name=DEVICE_NAME,
-        manufacturer="Deye",
-        model=sn,
-    )
 
 
 class DeyeSensor(CoordinatorEntity, SensorEntity):
@@ -205,7 +203,7 @@ class DeyeSensor(CoordinatorEntity, SensorEntity):
         self._attr_suggested_display_precision = precision
         if icon:
             self._attr_icon = icon
-        self._attr_device_info = _device_info(sn)
+        self._attr_device_info = device_info(sn)
 
     @property
     def native_value(self):
@@ -315,7 +313,7 @@ class DeyeClockSyncResultSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         sn = entry.data[CONF_LOGGER_SN]
         self._attr_unique_id = f"{sn}_clock_sync_result"
-        self._attr_device_info = _device_info(sn)
+        self._attr_device_info = device_info(sn)
 
     @property
     def available(self) -> bool:
@@ -410,7 +408,7 @@ class DeyeDailyConsumptionSensor(CoordinatorEntity, RestoreEntity, SensorEntity)
         super().__init__(coordinator)
         sn = entry.data[CONF_LOGGER_SN]
         self._attr_unique_id = f"{sn}_daily_consumption"
-        self._attr_device_info = _device_info(sn)
+        self._attr_device_info = device_info(sn)
         self._baseline: float | None = None
         self._day: date | None = None
         self._value: float | None = None

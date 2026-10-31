@@ -9,6 +9,7 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
+from custom_components.deye_ble import registers as r
 from custom_components.deye_ble.const import CONF_LOGGER_SN
 from custom_components.deye_ble.number import (
     DeyeBattLowSoc,
@@ -17,8 +18,10 @@ from custom_components.deye_ble.number import (
     DeyeDischargeSoc,
     DeyeGenPeakPower,
     DeyeGridPeakPower,
+    DeyeGridChargeCurrent,
     DeyeMaxChargeCurrent,
     DeyeMaxDischargeCurrent,
+    DeyeMaxSellPower,
     DeyeZeroExportPower,
 )
 from custom_components.deye_ble.registers import (
@@ -35,7 +38,10 @@ from custom_components.deye_ble.registers import (
 
 
 class FakeCoordinator:
-    def __init__(self):
+    def __init__(self, profile: str = r.PROFILE_THREE_PHASE):
+        self.profile = profile
+        self.register_profile = r.PROFILES[profile]
+        self.is_single_phase = profile == r.PROFILE_SINGLE_PHASE
         self.data: dict = {}
         self.write_calls: list[tuple[int, int]] = []
         self.write_many_calls: list[dict[int, int]] = []
@@ -124,5 +130,28 @@ def test_zero_export_power_allows_negative_range():
     # The phone app blocks negatives; the entity must expose the signed range
     # (live-probed: -15000..100) so a grid-import/feed-in bias can be set from HA.
     entity = DeyeZeroExportPower(FakeCoordinator(), FakeEntry("DEYE00000001"), "DEYE00000001")
-    assert entity._attr_native_min_value == -15000
+    assert entity.native_min_value == -15000
     assert entity._attr_native_max_value == 100
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cls,reg", [
+    (DeyeMaxSellPower, 245),
+    (DeyeZeroExportPower, 206),
+    (DeyeBattShutdownSoc, 217),
+    (DeyeMaxChargeCurrent, 210),
+    (DeyeGridChargeCurrent, 230),
+    (DeyeGridPeakPower, 293),
+])
+async def test_single_phase_number_writes_the_single_phase_register(cls, reg):
+    # Same entity, other map: a single-phase write must never land on the
+    # three-phase address (0x006C is daily PV there).
+    coordinator = FakeCoordinator(r.PROFILE_SINGLE_PHASE)
+    entity = cls(coordinator, FakeEntry("SN"), "SN")
+    await entity.async_set_native_value(50)
+    assert coordinator.write_calls == [(reg, 50)]
+
+
+def test_single_phase_zero_export_floor_is_zero():
+    entity = DeyeZeroExportPower(FakeCoordinator(r.PROFILE_SINGLE_PHASE), FakeEntry("SN"), "SN")
+    assert entity.native_min_value == 0

@@ -17,7 +17,9 @@ daily_grid_import sensor.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Callable
 
 
 # --- Poll plan --------------------------------------------------------------
@@ -25,19 +27,23 @@ from datetime import datetime
 # polls 18 blocks; we only read what we decode. 0x0210 is read with count 14
 # (the app used 8) so the block reaches inverter_temp at 0x021D.
 
-READ_BLOCKS: list[tuple[int, int]] = [
-    (0x00D2, 4),   # 0x00D2..0x00D5 — BMS charge/discharge voltage + current limits
-    (0x0202, 14),  # 0x0202..0x020F — energy totals + daily grid
-    (0x0210, 14),  # 0x0210..0x021D — daily/total solar + temperatures
+# Polling tiers (see PROFILES at the end of the module): LIVE every poll,
+# FAST about once a minute, SLOW on the configurable slow interval.
+LIVE_BLOCKS: list[tuple[int, int]] = [
     (0x024A, 6),   # 0x024A..0x024F — battery temp/voltage/soc/power
     (0x0256, 12),  # 0x0256..0x0261 — grid power (0x025F) + grid frequency (0x0261)
     (0x0270, 16),  # 0x0270..0x027F — inverter output L1-3 + grid voltages 0x0273-0x0275
     (0x0280, 16),  # 0x0280..0x028F — house load / UPS load
     (0x02A0, 16),  # 0x02A0..0x02AF — PV input power + PV1 voltage/current
 ]
+FAST_BLOCKS: list[tuple[int, int]] = [
+    (0x0202, 14),  # 0x0202..0x020F — energy totals + daily grid
+    (0x0210, 14),  # 0x0210..0x021D — daily/total solar + temperatures
+]
 
-# Control registers, read on the slower config cycle (P3).
-CONTROL_BLOCKS: list[tuple[int, int]] = [
+# Slow tier: BMS limits plus the control registers (best-effort reads).
+SLOW_BLOCKS: list[tuple[int, int]] = [
+    (0x00D2, 4),   # 0x00D2..0x00D5 — BMS charge/discharge voltage + current limits
     (0x003E, 3),   # 0x003E..0x0040 inverter real-time clock
     (0x0068, 1),   # 0x0068 zero-export power (W, signed)
     (0x006C, 2),   # 0x006C max charge current, 0x006D max discharge current (A)
@@ -286,9 +292,11 @@ def decode(words_by_reg: dict[int, list[int]]) -> dict[str, float | int | str | 
 # 391.4 / 195.0 / 155.3 kWh, BMS 55.20 V / 160 A / 170 A). Addresses and lookups
 # follow ha-solarman deye_hybrid.yaml and kellerza/sunsynk single_phase.py.
 #
-# Monitoring only: the control registers differ too (0x006C, the three-phase
-# max charge current, is daily PV here), so this profile never writes. Settings
-# are read on the slow config cycle and published as read-only values.
+# The control registers differ too (0x006C, the three-phase max charge current,
+# is daily PV here), so each profile carries its own control table (PROFILES).
+# Single-phase control addresses were write/read-back verified on a
+# SUN-8K-SG01LP1 + DL1000B (PR #6), and are gated by the read-only lock like
+# every other write.
 
 REG_DEVICE_TYPE = 0x0000
 DEVICE_TYPE_SINGLE_PHASE = 0x0003
@@ -302,20 +310,20 @@ def profile_from_device_type(raw: int) -> str:
     return PROFILE_SINGLE_PHASE if raw == DEVICE_TYPE_SINGLE_PHASE else PROFILE_THREE_PHASE
 
 
-# Telemetry, every poll. Reads above 16 registers get no BLE reply.
-SP_READ_BLOCKS: list[tuple[int, int]] = [
+# Reads above 16 registers get no BLE reply.
+SP_LIVE_BLOCKS: list[tuple[int, int]] = [
+    (150, 16),  # grid/inverter/load voltages, grid/CT/inverter currents
+    (166, 16),  # gen/grid/CT/inverter/load power, load current, gen voltage
+    (182, 15),  # battery temp/V/SOC/I/P, PV1/PV2 power, frequencies, relays, gen freq
+]
+SP_FAST_BLOCKS: list[tuple[int, int]] = [
     (59, 16),   # 59 state, 60/62 today energy/gen, 65-69 month/year, 70-74 battery energy
     (75, 16),   # 75-86 grid/load energy + grid frequency (79), 87-88 year load, 90 DC temp
     (91, 7),    # 91 AC temp, 92-95 generator energy, 96-97 total PV
     (101, 12),  # 101-106 alarm/fault words, 108 daily PV, 109-112 PV1/PV2 V + I
-    (150, 16),  # grid/inverter/load voltages, grid/CT/inverter currents
-    (166, 16),  # gen/grid/CT/inverter/load power, load current, gen voltage
-    (182, 15),  # battery temp/V/SOC/I/P, PV1/PV2 power, frequencies, relays, gen freq
     (312, 13),  # BMS charge/discharge V, limits, SOC, V, I, temp, alarm/fault words
 ]
-
-# Info + settings, on the slow config cycle (CONFIG_READ_INTERVAL).
-SP_CONFIG_BLOCKS: list[tuple[int, int]] = [
+SP_SLOW_BLOCKS: list[tuple[int, int]] = [
     (2, 16),    # 2 protocol, 3-7 SN, 10-14 firmware, 16-17 rated power
     (18, 7),    # 18 MPPTs/phases, 22-24 inverter clock
     (200, 16),  # battery type, charge voltages, capacity, currents
@@ -326,6 +334,8 @@ SP_CONFIG_BLOCKS: list[tuple[int, int]] = [
     (280, 14),  # peak shaving flags, grid protection limits, peak shaving power
     (325, 1),   # BMS protocol
 ]
+
+SP_REG_CLOCK = 22  # 22-24, packed like the three-phase 0x003E-0x0040
 
 # (register, scale, signed, offset) — same layout as _DECODE_MAP.
 _SP_DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
@@ -393,7 +403,7 @@ _SP_DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
     "bms_fault_code":          (323, 1,    False, 0),
 }
 
-# Settings, decoded from SP_CONFIG_BLOCKS (read-only on this profile).
+# Settings, decoded from SP_SLOW_BLOCKS.
 _SP_CONFIG_MAP: dict[str, tuple[int, float, bool, int]] = {
     "protocol_version":        (2,   1,    False, 0),
     "battery_absorption_voltage": (202, 0.01, False, 0),
@@ -507,7 +517,7 @@ def _decode_words_bitfield(words: list[int]) -> int:
 
 
 def decode_single_phase(words_by_reg: dict[int, list[int]]) -> dict:
-    """Decode a single-phase poll (SP_READ_BLOCKS, optionally SP_CONFIG_BLOCKS).
+    """Decode a single-phase poll (any subset of the SP_* tier blocks).
 
     Same contract as :func:`decode`: keys whose registers were not polled are
     omitted, never guessed.
@@ -560,8 +570,7 @@ def decode_single_phase(words_by_reg: dict[int, list[int]]) -> dict:
         result["mppt_count"] = mppt >> 8
         result["phase_count"] = mppt & 0xFF
 
-    # Single-phase clock is at 22-24, packed like the three-phase 0x003E-0x0040.
-    clock_words = _words(words_by_reg, 22, CLOCK_WORD_COUNT)
+    clock_words = _words(words_by_reg, SP_REG_CLOCK, CLOCK_WORD_COUNT)
     if clock_words is not None:
         clock = decode_clock(clock_words)
         if clock is not None:
@@ -624,6 +633,98 @@ def active_tou_slot(slots: list[dict], hhmm: str) -> int | None:
         if (start <= hhmm < end) if start < end else (hhmm >= start or hhmm < end):
             return i
     return None
+
+
+# --- Profiles ---------------------------------------------------------------
+
+TIER_LIVE = "live"
+TIER_FAST = "fast"
+TIER_SLOW = "slow"
+ALL_TIERS = frozenset((TIER_LIVE, TIER_FAST, TIER_SLOW))
+
+SP_IO_MODE_IDS = {v: k for k, v in SP_IO_MODES.items()}
+SP_ENERGY_PATTERN_IDS = {v: k for k, v in SP_ENERGY_PATTERNS.items()}
+
+
+@dataclass(frozen=True)
+class RegisterProfile:
+    """Everything that differs between the three-phase and single-phase maps.
+
+    LIVE and FAST reads are fatal on failure (the poll failed); SLOW reads are
+    best-effort, and the slow tier only counts as done when every slow block
+    was read. ``controls`` maps a coordinator data key to its holding
+    register; a control entity exists only where its key is listed.
+    """
+
+    live: list[tuple[int, int]]
+    fast: list[tuple[int, int]]
+    slow: list[tuple[int, int]]
+    decode: Callable[[dict[int, list[int]]], dict]
+    controls: dict[str, int]
+    clock_reg: int
+    # None where the profile has no Time Sync commit edge to drive.
+    time_sync_reg: int | None
+
+
+PROFILES: dict[str, RegisterProfile] = {
+    PROFILE_THREE_PHASE: RegisterProfile(
+        live=LIVE_BLOCKS,
+        fast=FAST_BLOCKS,
+        slow=SLOW_BLOCKS,
+        decode=decode,
+        controls={
+            "work_mode": REG_WORK_MODE,
+            "max_sell_power": REG_MAX_SELL_POWER,
+            "zero_export_power": REG_ZERO_EXPORT_POWER,
+            "charge_soc": REG_CHARGE_SOC,
+            "max_charge_current": REG_MAX_CHARGE_CURRENT,
+            "max_discharge_current": REG_MAX_DISCHARGE_CURRENT,
+            "batt_shutdown_soc": REG_BATT_SHUTDOWN_SOC,
+            "batt_restart_soc": REG_BATT_RESTART_SOC,
+            "batt_low_soc": REG_BATT_LOW_SOC,
+            "grid_peak_power": REG_GRID_PEAK_POWER,
+            "gen_peak_power": REG_GEN_PEAK_POWER,
+        },
+        clock_reg=REG_CLOCK,
+        time_sync_reg=REG_TIME_SYNC,
+    ),
+    PROFILE_SINGLE_PHASE: RegisterProfile(
+        live=SP_LIVE_BLOCKS,
+        fast=SP_FAST_BLOCKS,
+        slow=SP_SLOW_BLOCKS,
+        decode=decode_single_phase,
+        controls={
+            "zero_export_power": 206,
+            "max_charge_current": 210,
+            "max_discharge_current": 211,
+            "batt_shutdown_soc": 217,
+            "batt_restart_soc": 218,
+            "batt_low_soc": 219,
+            "grid_charge_current": 230,
+            "grid_charge_enabled": 232,
+            "io_mode": 235,
+            "energy_pattern": 243,
+            "work_mode": 244,
+            "max_sell_power": 245,
+            "solar_sell_enabled": 247,
+            "gen_peak_power": 292,
+            "grid_peak_power": 293,
+        },
+        clock_reg=SP_REG_CLOCK,
+        # Unverified on single-phase: a clock sync there writes only the clock
+        # block, never the three-phase Time Sync address.
+        time_sync_reg=None,
+    ),
+}
+
+
+def tier_blocks(profile: RegisterProfile, tiers) -> list[tuple[tuple[int, int], bool]]:
+    """(block, fatal) pairs for *tiers*, in LIVE, FAST, SLOW order."""
+    out = []
+    for tier, blocks in ((TIER_LIVE, profile.live), (TIER_FAST, profile.fast), (TIER_SLOW, profile.slow)):
+        if tier in tiers:
+            out += [(block, tier != TIER_SLOW) for block in blocks]
+    return out
 
 
 # --- Encoders ---------------------------------------------------------------
