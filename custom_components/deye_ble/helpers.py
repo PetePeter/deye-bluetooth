@@ -25,17 +25,44 @@ class Transport(Protocol):
 
 # --- Pure async poll (unit-testable with a fake transport) ------------------
 
-async def async_poll(transport: Transport, *, with_config: bool = False) -> dict[str, Any]:
+async def async_poll(
+    transport: Transport,
+    *,
+    with_config: bool = False,
+    profile: str | None = r.PROFILE_THREE_PHASE,
+) -> dict[str, Any]:
     """Connect, handshake, read all register blocks, decode and return.
 
     Telemetry-block read failures propagate (the poll has failed). Control-block
     reads (only when *with_config*) are non-fatal: a failure is logged and the
     affected config keys are simply omitted, so a config hiccup never discards a
     good telemetry cycle. The caller carries forward the previous config values.
+
+    *profile* selects the register map; ``None`` detects it from the device-type
+    register first. The result carries it as ``device_profile`` so the caller
+    can pass it back and skip the detection read on later polls.
     """
     await transport.handshake()
 
+    if profile is None:
+        (device_type,) = await transport.read(r.REG_DEVICE_TYPE, 1)
+        profile = r.profile_from_device_type(device_type)
+
     words_by_reg: dict[int, list[int]] = {}
+    if profile == r.PROFILE_SINGLE_PHASE:
+        # Monitoring-only profile: settings are read, never the control blocks.
+        for start, count in r.SP_READ_BLOCKS:
+            words_by_reg[start] = await transport.read(start, count)
+        if with_config:
+            for start, count in r.SP_CONFIG_BLOCKS:
+                try:
+                    words_by_reg[start] = await transport.read(start, count)
+                except Exception as e:  # noqa: BLE001 — config read is best-effort
+                    _LOGGER.debug("config block %d read failed (non-fatal): %s", start, e)
+        data = r.decode_single_phase(words_by_reg)
+        data["device_profile"] = profile
+        return data
+
     for start, count in r.READ_BLOCKS:
         words_by_reg[start] = await transport.read(start, count)
 
@@ -46,7 +73,9 @@ async def async_poll(transport: Transport, *, with_config: bool = False) -> dict
             except Exception as e:  # noqa: BLE001 — config read is best-effort
                 _LOGGER.debug("config block 0x%04X read failed (non-fatal): %s", start, e)
 
-    return r.decode(words_by_reg)
+    data = r.decode(words_by_reg)
+    data["device_profile"] = profile
+    return data
 
 
 # --- Grid-connection inference ----------------------------------------------
@@ -66,6 +95,9 @@ def infer_grid_connected(data: dict[str, Any]) -> bool | None:
     ``False`` if all reported phases are below it, and ``None`` if no grid
     voltage was reported (unknown — never a false "disconnected").
     """
+    if data.get("grid_connected") is not None:
+        # Single-phase profile reads the grid relay (register 194) directly.
+        return data["grid_connected"]
     voltages = [data[k] for k in _GRID_VOLTAGE_KEYS if data.get(k) is not None]
     if not voltages:
         return None
