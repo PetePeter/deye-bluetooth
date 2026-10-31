@@ -20,10 +20,28 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    if coordinator.read_only:
+        # Single-phase: relays, problem flags and read-only setting switches;
+        # Time Sync is not read on this map.
+        async_add_entities([DeyeGridConnected(coordinator, entry)] + [
+            DeyeFlag(coordinator, entry, *row) for row in SINGLE_PHASE_FLAGS
+        ])
+        return
     async_add_entities([
         DeyeGridConnected(coordinator, entry),
         DeyeCloudClockSyncEnabled(coordinator, entry),
     ])
+
+
+# (key, name, device_class, icon, diagnostic)
+SINGLE_PHASE_FLAGS: list[tuple] = [
+    ("inverter_problem",    "Inverter Problem",    BinarySensorDeviceClass.PROBLEM,      None,         False),
+    ("bms_problem",         "BMS Problem",         BinarySensorDeviceClass.PROBLEM,      None,         False),
+    ("grid_charge_enabled", "Grid Charging",       None, "mdi:transmission-tower-import", True),
+    ("gen_charge_enabled",  "Generator Charging",  None, "mdi:engine",                    True),
+    ("solar_sell_enabled",  "Solar Sell",          None, "mdi:transmission-tower-export", True),
+    ("tou_enabled",         "Time of Use Enabled", None, "mdi:calendar-clock",            True),
+]
 
 
 def _device_info(sn: str) -> DeviceInfo:
@@ -82,3 +100,26 @@ class DeyeCloudClockSyncEnabled(CoordinatorEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         return (self.coordinator.data or {}).get("time_sync")
+
+
+class DeyeFlag(CoordinatorEntity, BinarySensorEntity):
+    """A boolean decoded on the single-phase map (see SINGLE_PHASE_FLAGS)."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, entry: ConfigEntry, key, name, device_class, icon, diagnostic):
+        super().__init__(coordinator)
+        self._key = key
+        sn = entry.data[CONF_LOGGER_SN]
+        self._attr_name = name
+        self._attr_unique_id = f"{sn}_{key}"
+        self._attr_device_class = device_class
+        if icon:
+            self._attr_icon = icon
+        if diagnostic:
+            self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_device_info = _device_info(sn)
+
+    @property
+    def is_on(self) -> bool | None:
+        return (self.coordinator.data or {}).get(self._key)
