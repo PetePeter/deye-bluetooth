@@ -60,6 +60,8 @@ _LOGGER = logging.getLogger(__name__)
 # forward across polls so a config value isn't dropped (blanking its entity) on
 # the telemetry-only cycles between config reads.
 _CONFIG_KEYS = ("work_mode", "max_sell_power", "zero_export_power")
+# Single-phase slow cycle: one key per settings block that must have come back.
+_SP_CONFIG_KEYS = ("inverter_serial", "battery_capacity", "work_mode", "tou_slots", "grid_peak_power")
 _CARRY_KEYS = _CONFIG_KEYS + (
     "charge_soc", "discharge_soc", "charge_start", "charge_end",
     "max_charge_current", "max_discharge_current",
@@ -111,6 +113,9 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         self._write_attempts = max(1, write_attempts)
         self._write_backoff = WRITE_RETRY_BACKOFF
         self._consecutive_failures = 0
+        # Register map, detected from the device-type register on the first
+        # poll and kept for the life of the entry (see registers.PROFILE_*).
+        self._profile: str | None = None
         self._tracked_values: dict[int, int | str] = {}
         # Last clock-sync result, re-published on every poll (see
         # _record_sync_outcome). Empty until a sync has actually run.
@@ -208,6 +213,23 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             await self._drop_persistent()
             raise
 
+    @property
+    def profile(self) -> str | None:
+        """Detected register map, or None before the first good poll."""
+        return self._profile
+
+    @property
+    def read_only(self) -> bool:
+        """True on the monitoring-only single-phase map: no writes, no clock sync."""
+        return self._profile == r.PROFILE_SINGLE_PHASE
+
+    def _refuse_if_read_only(self) -> None:
+        if self.read_only:
+            raise HomeAssistantError(
+                "Single-phase Deye inverter: this integration is monitoring-only "
+                "for it, the control registers differ from the three-phase map"
+            )
+
     def mark_config_dirty(self) -> None:
         self._config_dirty = True
 
@@ -234,9 +256,13 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
             async with self._ble_lock:
                 async with self._session(ble_device) as transport:
-                    data = await async_poll(transport, with_config=config_due)
+                    data = await async_poll(
+                        transport, with_config=config_due, profile=self._profile,
+                    )
         except Exception as e:
             return self._handle_poll_failure(e)
+
+        self._profile = data.get("device_profile", self._profile)
 
         # A good cycle clears the transient-failure run.
         self._consecutive_failures = 0
@@ -255,10 +281,16 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         data = self._with_sync_outcome(data)
 
+        # Single-phase: judge the config read before carry-forward can fill it in.
+        sp_config_ok = config_due and all(key in data for key in _SP_CONFIG_KEYS)
+
         # Carry forward config + write-only control values not present this read.
+        # On the single-phase map a telemetry gap fails the whole poll, so any
+        # key missing from a good cycle is a slow-cycle setting: carry them all.
         prev = self.data
         if prev:
-            for key in _CARRY_KEYS:
+            carry = prev.keys() if self.read_only else _CARRY_KEYS
+            for key in carry:
                 if key not in data and key in prev:
                     data[key] = prev[key]
 
@@ -268,7 +300,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         data = hold_spurious_total_resets(prev, data)
 
         # Only acknowledge the config read if it was attempted AND came back.
-        if config_due and all(key in data for key in _CONFIG_KEYS):
+        if sp_config_ok if self.read_only else (config_due and all(key in data for key in _CONFIG_KEYS)):
             self._last_config_read = time.monotonic()
             self._config_dirty = False
 
@@ -334,6 +366,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Transient BLE failures are retried (see :meth:`_write_regs`); the value
         is tracked for optional drift detection (reassert) once it lands.
         """
+        self._refuse_if_read_only()
         await self._write_regs({reg: value})
 
     async def async_write_many(self, regs: dict[int, int]) -> None:
@@ -345,6 +378,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         read-back verify, retry, and drift tracking — but opens just one
         connection so five slots don't mean five reconnects on a flaky link.
         """
+        self._refuse_if_read_only()
         await self._write_regs(regs)
 
     async def async_dump_registers(
@@ -426,6 +460,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Raises HomeAssistantError if no attempt verifies, or if the clock landed
         but Time Sync could not be re-enabled.
         """
+        self._refuse_if_read_only()
         if self._dry_run:
             _LOGGER.info("dry-run: would sync inverter clock (no GATT write issued)")
             return
@@ -575,6 +610,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         returns before the poll has actually happened, which puts the same stale
         read back in front of the caller by a different route.
         """
+        self._refuse_if_read_only()
         await self.async_sync_clock(min_drift=min_drift)
         await self.async_refresh()
 
@@ -883,6 +919,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         rather than burning the retry budget. The value is tracked for drift
         detection only after the whole batch has verified.
         """
+        self._refuse_if_read_only()
         # Dry-run is the safety default: never touch the radio, just log intent.
         # Checked first so it works even when the device is momentarily absent.
         if self._dry_run:
