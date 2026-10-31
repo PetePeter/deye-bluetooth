@@ -1,8 +1,4 @@
-"""Sensor entities mirroring the ha-deyecloud-bridge sensor set.
-
-All telemetry sensors are thin CoordinatorEntity wrappers — logic lives in
-registers.decode (P2) and helpers.daily_calc (P4). No non-trivial logic here.
-"""
+﻿"""Sensor definitions and entity implementations for Deye BLE."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -25,39 +21,76 @@ from homeassistant.util import dt as dt_util
 from .const import CONF_LOGGER_SN, DEVICE_NAME, DOMAIN, SYNC_RESULTS
 from .helpers import daily_calc
 
-# (key, name, unit, device_class, state_class, icon, precision)
+# --- SENSORS CLASSIFICATION (BLE LD, BLE FD, BLE SD) ---
+# Format: (key, name, unit, device_class, state_class, icon, precision)
 SENSORS: list[tuple] = [
-    ("solar_power",             "Solar Power",            "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:solar-power",               0),
-    ("house_load",              "House Load",             "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:home-lightning-bolt",       0),
-    ("grid_power",              "Grid Power",             "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:transmission-tower",        0),
-    ("battery_power",           "Battery Power",          "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:battery-charging",          0),
-    ("ups_power",               "UPS Power",              "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:power-plug",                0),
-    ("battery_soc",             "Battery SOC",            "%",   SensorDeviceClass.BATTERY,     SensorStateClass.MEASUREMENT,    None,                            1),
-    ("battery_voltage",         "Battery Voltage",        "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            2),
-    ("pv1_voltage",             "PV1 Voltage",            "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    "mdi:solar-panel",               1),
-    ("pv1_current",             "PV1 Current",            "A",   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,    "mdi:solar-panel",               1),
-    ("battery_temp",            "Battery Temperature",    "°C",  SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,    None,                            1),
-    ("inverter_temp",           "Inverter Temperature",   "°C",  SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,    None,                            1),
-    ("daily_solar",             "Solar Today",            "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:solar-power",             2),
-    ("daily_grid_import",       "Grid Import Today",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-import", 2),
-    ("daily_grid_export",       "Grid Export Today",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-export", 2),
-    ("total_solar",             "Solar Total",            "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, None,                          2),
-    ("total_grid_import",       "Grid Import Total",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-import", 2),
-    ("total_grid_export",       "Grid Export Total",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-export", 2),
-    ("total_battery_charge",    "Battery Charge Total",   "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, None,                          2),
-    ("total_battery_discharge", "Battery Discharge Total","kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, None,                          2),
-    ("max_sell_power",          "Max Sell Power",         "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:transmission-tower-export", 0),
-    ("inverter_power_l1",      "Inverter Output L1",    "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:lightning-bolt",            0),
-    ("inverter_power_l2",      "Inverter Output L2",    "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:lightning-bolt",            0),
-    ("inverter_power_l3",      "Inverter Output L3",    "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:lightning-bolt",            0),
-    ("grid_voltage_l1",        "Grid Voltage L1",       "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            1),
-    ("grid_voltage_l2",        "Grid Voltage L2",       "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            1),
-    ("grid_voltage_l3",        "Grid Voltage L3",       "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            1),
-    ("grid_frequency",         "Grid Frequency",        "Hz",  SensorDeviceClass.FREQUENCY,   SensorStateClass.MEASUREMENT,    None,                            2),
-    ("bms_charge_voltage",     "BMS Charge Voltage",    "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            2),
-    ("bms_discharge_voltage",  "BMS Discharge Voltage", "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            2),
-    ("bms_charge_current_limit",    "BMS Charge Current Limit",    "A", SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None,                       0),
-    ("bms_discharge_current_limit", "BMS Discharge Current Limit", "A", SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None,                       0),
+    # 🔴 TIER A: LIVE DATA (BLE LD)
+    ("solar_power",             "Solar Power BLE LD",            "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:solar-power",               0),
+    ("battery_power",           "Battery Power BLE LD",          "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:battery-charging",          0),
+    ("battery_soc",             "Battery SOC BLE LD",            "%",   SensorDeviceClass.BATTERY,     SensorStateClass.MEASUREMENT,    None,                            1),
+    ("grid_power",              "Grid Power BLE LD",             "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:transmission-tower",        0),
+    ("grid_voltage_l1",         "Grid Voltage L1 BLE LD",        "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            1),
+    ("grid_current_l1",         "Grid Current L1 BLE LD",        "A",   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,    "mdi:transmission-tower",        2),
+    ("internal_ct_l1_power",    "Internal CT L1 Power BLE LD",   "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:current-ac",                0),
+    ("external_ct_l1_power",    "External CT L1 Power BLE LD",   "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:current-ac",                0),
+    ("house_load",              "House Load BLE LD",             "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:home-lightning-bolt",       0),
+    ("ups_power",               "UPS Power BLE LD",              "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:power-plug",                0),
+    ("gen_power",               "SmartLoad Power BLE LD",        "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:home-battery",              0),
+    ("ups_load_power",          "UPS Load Power BLE LD",         "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:power-plug",                0),
+    ("ac_voltage_l1",           "AC Voltage L1 BLE LD",          "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            1),
+
+    # 🟡 TIER STANDARD: FAST DATA (BLE FD)
+    ("pv1_power",               "PV1 Power BLE FD",              "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:solar-panel",               0),
+    ("pv1_voltage",             "PV1 Voltage BLE FD",            "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    "mdi:solar-panel",               1),
+    ("pv2_power",               "PV2 Power BLE FD",              "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:solar-panel",               0),
+    ("pv2_voltage",             "PV2 Voltage BLE FD",            "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    "mdi:solar-panel",               1),
+    ("daily_solar",             "Daily Solar BLE FD",            "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:solar-power",             2),
+    ("battery_voltage",         "Battery Voltage BLE FD",        "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            2),
+    ("battery_temp",            "Battery Temperature BLE FD",    "°C",  SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,    None,                            1),
+    ("daily_battery_charge",    "Daily Battery Charge BLE FD",   "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:battery-plus",            2),
+    ("daily_battery_discharge", "Daily Battery Discharge BLE FD","kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:battery-minus",           2),
+    ("grid_frequency",          "Grid Frequency BLE FD",         "Hz",  SensorDeviceClass.FREQUENCY,   SensorStateClass.MEASUREMENT,    None,                            2),
+    ("grid_total_reactive_power","Grid Total Reactive Power BLE FD","VAR", None,                       SensorStateClass.MEASUREMENT,    None,                            1),
+    ("daily_grid_import",       "Daily Grid Import BLE FD",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-import", 2),
+    ("daily_grid_export",       "Daily Grid Export BLE FD",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-export", 2),
+    ("daily_load_energy",       "Daily Load Energy BLE FD",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:home-lightning-bolt",     2),
+    ("inverter_temp",           "Inverter Temperature BLE FD",   "°C",  SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,    None,                            1),
+    ("dc_temperature",          "DC Temperature BLE FD",         "°C",  SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,    None,                            1),
+    ("total_dc_input_power",    "Total DC Input Power BLE FD",   "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:solar-power",               0),
+
+    # 🔵 TIER B: SLOW DATA (BLE SD)
+    ("total_solar",             "Total Solar BLE SD",            "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, None,                          2),
+    ("total_grid_import",       "Total Grid Import BLE SD",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-import", 2),
+    ("total_grid_export",       "Total Grid Export BLE SD",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-export", 2),
+    ("total_battery_charge",    "Total Battery Charge BLE SD",   "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, None,                          2),
+    ("total_battery_discharge", "Total Battery Discharge BLE SD","kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, None,                          2),
+    ("total_consumption",       "Total Consumption BLE SD",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:home-lightning-bolt",     2),
+    ("max_solar_power",         "Max Solar Power BLE SD",        "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:solar-power",               0),
+    ("fault_message",           "Inverter Fault Message BLE SD", None,  None,                          None,                            "mdi:message-alert-outline",     None),
+    ("alarm_message",           "Inverter Warning Message BLE SD",None, None,                          None,                            "mdi:alert-outline",             None),
+    ("rated_power",             "Rated Inverter Power BLE SD",   "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:solar-power-variant",       0),
+    ("battery_rated_capacity",  "Battery Rated Capacity BLE SD", "Ah",  None,                          None,                            "mdi:battery",                   1),
+]
+
+ENUM_SENSORS: list[tuple] = [
+    ("battery_status", "Battery Status BLE LD",
+     ["Charging", "Discharging", "Stand-by"],
+     "mdi:battery-heart-variant"),
+    ("grid_status",    "Grid Status BLE LD",
+     ["BUY", "SELL", "IDLE"],
+     "mdi:transmission-tower"),
+    ("inverter_status","Inverter Status BLE LD",
+     ["Standby", "Self-Checking", "Normal", "Alarm", "Fault"],
+     "mdi:information-outline"),
+    ("io_mode",        "IO Mode BLE FD",
+     ["Disabled", "SmartLoad", "Microinverter", "Generator"],
+     "mdi:swap-horizontal"),
+    ("energy_priority", "Energy Priority BLE FD",
+     ["Battery First", "Load First"],
+     "mdi:battery-sync"),
+    ("work_mode",      "Work Mode BLE FD",
+     ["Sell to Grid", "Zero Export to Load", "Zero Export to CT"],
+     "mdi:transmission-tower-export"),
 ]
 
 
@@ -66,11 +99,10 @@ async def async_setup_entry(
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
     entities = [DeyeSensor(coordinator, entry, *row) for row in SENSORS]
-    entities.append(DeyeDailyConsumptionSensor(coordinator, entry))
+    entities += [DeyeEnumSensor(coordinator, entry, *row) for row in ENUM_SENSORS]
     entities.append(DeyeInverterClockSensor(coordinator, entry))
-    entities.append(DeyeClockSyncResultSensor(coordinator, entry))
     entities.append(DeyeClockDriftSensor(coordinator, entry))
-    entities.append(DeyeClockTimeOfDayDriftSensor(coordinator, entry))
+    entities.append(DeyeDailyConsumptionSensor(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -86,166 +118,77 @@ def _device_info(sn: str) -> DeviceInfo:
 class DeyeSensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, entry: ConfigEntry, key, name, unit,
-                 device_class, state_class, icon, precision):
+    def __init__(
+        self,
+        coordinator,
+        entry: ConfigEntry,
+        key: str,
+        name: str,
+        unit: str | None,
+        device_class: SensorDeviceClass | None,
+        state_class: SensorStateClass | None,
+        icon: str | None,
+        precision: int,
+    ) -> None:
         super().__init__(coordinator)
-        self._key = key
         sn = entry.data[CONF_LOGGER_SN]
-        self._attr_name = name
+        self._key = key
         self._attr_unique_id = f"{sn}_{key}"
+        self._attr_name = name
         self._attr_native_unit_of_measurement = unit
         self._attr_device_class = device_class
         self._attr_state_class = state_class
-        self._attr_suggested_display_precision = precision
-        if icon:
+        if icon is not None:
             self._attr_icon = icon
+        if precision is not None:
+            self._attr_suggested_display_precision = precision
         self._attr_device_info = _device_info(sn)
 
     @property
     def native_value(self):
-        if self.coordinator.data is None:
-            return None
-        return self.coordinator.data.get(self._key)
+        return (self.coordinator.data or {}).get(self._key)
 
 
-# -- Inverter clock (diagnostic) ----------------------------------------------
+class DeyeEnumSensor(DeyeSensor):
+    _attr_state_class = None
+
+    def __init__(self, coordinator, entry: ConfigEntry, key: str, name: str, options: list[str], icon: str | None):
+        super().__init__(coordinator, entry, key, name, None, SensorDeviceClass.ENUM, None, icon, 0)
+        self._attr_options = options
+
 
 class DeyeInverterClockSensor(DeyeSensor):
-    """The inverter's own real-time clock, as read on the config cycle.
-
-    The device reports a bare wall clock with no timezone; HA's timestamp
-    device class needs an aware datetime, so site time is attached here — at the
-    entity boundary, where the assumption is visible — rather than in the decode.
-    """
-
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, entry: ConfigEntry):
         super().__init__(
-            coordinator, entry, "inverter_clock", "Inverter Clock", None,
-            SensorDeviceClass.TIMESTAMP, None, "mdi:clock-outline", None,
+            coordinator, entry, "inverter_clock", "Inverter Clock BLE FD", None,
+            SensorDeviceClass.TIMESTAMP, None, "mdi:clock-outline", 0,
         )
 
     @property
     def native_value(self):
-        value = super().native_value
-        if value is None:
+        val = (self.coordinator.data or {}).get("inverter_clock")
+        if val is None:
             return None
-        return value.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-
-
-
-class DeyeClockSyncResultSensor(CoordinatorEntity, SensorEntity):
-    """The result of the last clock sync — deliberately NOT a device reading.
-
-    Availability is fixed True rather than following the coordinator, and that
-    is the whole point of the entity existing separately. Every other entity
-    here reports what the inverter currently says, so when polling fails they
-    are rightly unavailable — and an unavailable entity has its attributes
-    stripped by HA entirely. That would take the sync result down with the
-    telemetry: a sync that verified, followed by one failed poll, would leave a
-    verifier seeing nothing and calling a good sync a failure. What we know
-    about a completed sync does not stop being true when the radio drops.
-
-    Reads "unknown" until a sync has actually run — never a fabricated success.
-    """
-
-    _attr_has_entity_name = True
-    _attr_name = "Clock Sync Result"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:clock-check-outline"
-    _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = SYNC_RESULTS
-
-    def __init__(self, coordinator, entry: ConfigEntry):
-        super().__init__(coordinator)
-        sn = entry.data[CONF_LOGGER_SN]
-        self._attr_unique_id = f"{sn}_clock_sync_result"
-        self._attr_device_info = _device_info(sn)
-
-    @property
-    def available(self) -> bool:
-        return True
-
-    @property
-    def native_value(self):
-        return (self.coordinator.data or {}).get("clock_sync_result")
-
-    @property
-    def extra_state_attributes(self):
-        data = self.coordinator.data or {}
-        if "clock_sync_result" not in data:
-            return None
-        return {
-            # sync_id identifies the run: a verifier compares it against the
-            # value it saw before calling the service. sync_at is for humans —
-            # comparing timestamps would assume a monotonic wall clock, which
-            # is precisely what this feature exists to fix.
-            "sync_id": data["clock_sync_id"],
-            "sync_attempts": data["clock_sync_attempts"],
-            "sync_at": data["clock_sync_at"],
-        }
+        return dt_util.as_local(val.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE))
 
 
 class DeyeClockDriftSensor(DeyeSensor):
-    """How far the inverter clock had wandered at the last clock read.
-
-    Positive means the inverter is running ahead of HA. The value is a snapshot
-    taken when the clock was read (up to CONFIG_READ_INTERVAL old), not a live
-    countdown — see helpers.clock_drift_seconds.
-    """
-
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, entry: ConfigEntry):
         super().__init__(
-            coordinator, entry, "inverter_clock_drift", "Inverter Clock Drift", "s",
-            SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT,
-            "mdi:clock-alert-outline", 0,
+            coordinator, entry, "inverter_clock_drift", "Inverter Clock Drift BLE FD", "s",
+            SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT, "mdi:clock-alert-outline", 0,
         )
 
 
-class DeyeClockTimeOfDayDriftSensor(DeyeSensor):
-    """Clock drift with the date ignored — the time-of-day component alone.
-
-    Kept alongside the total drift, not instead of it: a wrong year is a real
-    fault worth seeing, but it swamps the minutes-scale offset that identifies
-    something actively rewriting the RTC. Wrapped to +/-12h so a small offset
-    straddling midnight can't masquerade as a near-24h jump.
-    """
-
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    def __init__(self, coordinator, entry: ConfigEntry):
-        super().__init__(
-            coordinator, entry, "inverter_time_of_day_drift",
-            "Inverter Clock Drift (Time of Day)", "s",
-            SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT,
-            "mdi:clock-fast", 0,
-        )
-
-
-# -- Daily consumption (RestoreEntity, midnight baseline) ---------------------
-
-@dataclass
-class _DailyExtraData(ExtraStoredData):
-    baseline: float | None
-    day: str | None
-
-    def as_dict(self) -> dict:
-        return {"baseline": self.baseline, "day": self.day}
-
-
-class DeyeDailyConsumptionSensor(CoordinatorEntity, RestoreEntity, SensorEntity):
-    """Daily energy consumption derived from the lifetime total register.
-
-    Records the cumulative ``total_consumption`` at midnight and reports the
-    difference.  Baseline persists across HA restarts via RestoreEntity extra
-    data.  The pure math lives in ``helpers.daily_calc`` (unit-tested).
-    """
+class DeyeDailyConsumptionSensor(CoordinatorEntity, SensorEntity):
+    """Exposes the inverter's native hardware daily load consumption (0x0054)."""
 
     _attr_has_entity_name = True
-    _attr_name = "Consumption Today"
+    _attr_name = "Consumption Today BLE FD"
     _attr_native_unit_of_measurement = "kWh"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
@@ -255,43 +198,13 @@ class DeyeDailyConsumptionSensor(CoordinatorEntity, RestoreEntity, SensorEntity)
     def __init__(self, coordinator, entry: ConfigEntry):
         super().__init__(coordinator)
         sn = entry.data[CONF_LOGGER_SN]
-        self._attr_unique_id = f"{sn}_daily_consumption"
+        self._attr_unique_id = f"{sn}_consumption_today"
         self._attr_device_info = _device_info(sn)
-        self._baseline: float | None = None
-        self._day: date | None = None
-        self._value: float | None = None
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        extra = await self.async_get_last_extra_data()
-        if extra is not None:
-            data = extra.as_dict()
-            self._baseline = data.get("baseline")
-            stored_day = data.get("day")
-            self._day = date.fromisoformat(stored_day) if stored_day else None
-        self._recalculate()
 
     @property
-    def extra_restore_state_data(self) -> _DailyExtraData:
-        return _DailyExtraData(
-            self._baseline,
-            self._day.isoformat() if self._day else None,
-        )
-
-    @property
-    def native_value(self):
-        return self._value
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        self._recalculate()
-        super()._handle_coordinator_update()
-
-    def _recalculate(self) -> None:
-        if self.coordinator.data is None:
-            return
-        total = self.coordinator.data.get("total_consumption")
-        today = dt_util.now().date()
-        self._baseline, self._day, self._value = daily_calc(
-            self._baseline, self._day, total, today,
-        )
+    def native_value(self) -> float | None:
+        # Reads the native hardware register (0x0054 daily_load_energy)
+        val = (self.coordinator.data or {}).get("daily_load_energy")
+        if val is not None:
+            return float(val)
+        return (self.coordinator.data or {}).get("daily_consumption")
