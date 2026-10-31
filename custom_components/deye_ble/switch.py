@@ -1,11 +1,4 @@
-"""Switch entities — peak-shaving enable toggles.
-
-Grid and generator peak-shaving enables both live in the packed 0x00B2
-Advanced-Function-1 bitfield, alongside other (unmapped) function bits. Each
-toggle therefore read-modify-writes: it takes the last-polled raw word, flips
-only its own bit, and writes the whole register back — so enabling grid shaving
-never disturbs the generator bit (or anything else in 0x00B2).
-"""
+"""Switch entities for Deye BLE integration."""
 from __future__ import annotations
 
 import logging
@@ -22,7 +15,10 @@ from .const import CONF_LOGGER_SN, DEVICE_NAME, DOMAIN
 from .registers import (
     GEN_PEAK_SHAVE_MASK,
     GRID_PEAK_SHAVE_MASK,
+    REG_GRID_CHARGE_ENABLE,
     REG_PEAK_SHAVING_FLAGS,
+    REG_SOLAR_SELL_ENABLE,
+    REG_TOU_ENABLE,
     set_flag,
 )
 
@@ -34,10 +30,19 @@ async def async_setup_entry(
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
     sn = entry.data[CONF_LOGGER_SN]
-    async_add_entities([
+
+    entities: list[SwitchEntity] = [
+        # Master Safety Write Lock Switch (Default OFF = dry-run / locked)
+        DeyeInverterWriteLockSwitch(coordinator, entry, sn),
+
+        # Inverter configuration holding switches
+        DeyeSolarSellSwitch(coordinator, entry, sn),
+        DeyeGridChargeSwitch(coordinator, entry, sn),
+        DeyeTimeOfUseSwitch(coordinator, entry, sn),
         DeyeGridPeakShaving(coordinator, entry, sn),
         DeyeGenPeakShaving(coordinator, entry, sn),
-    ])
+    ]
+    async_add_entities(entities)
 
 
 def _device_info(sn: str) -> DeviceInfo:
@@ -49,13 +54,151 @@ def _device_info(sn: str) -> DeviceInfo:
     )
 
 
-class _PeakShaveSwitch(CoordinatorEntity, SwitchEntity):
-    """One enable bit of the packed 0x00B2 peak-shaving flag register.
+class DeyeInverterWriteLockSwitch(CoordinatorEntity, SwitchEntity):
+    """Master Safety Write Lock Toggle Switch.
 
-    Subclasses declare ``_mask`` (the enable bit) and ``_data_key`` (the decoded
-    bool key + unique-id suffix). Toggling read-modify-writes 0x00B2 so the other
-    function bits are preserved.
+    When OFF (Default): All inverter holding register writes are strictly blocked
+    (dry_run = True) to prevent accidental UI touches and unintended automations.
+    When ON: Inverter holding register writes are permitted (dry_run = False).
     """
+
+    _attr_has_entity_name = True
+    _attr_name = "Allow Inverter Writes"
+    _attr_device_class = SwitchDeviceClass.SWITCH
+
+    def __init__(self, coordinator, entry: ConfigEntry, sn: str):
+        super().__init__(coordinator)
+        self._sn = sn
+        self._attr_unique_id = f"{sn}_allow_inverter_writes"
+        self._attr_device_info = _device_info(sn)
+
+    @property
+    def is_on(self) -> bool:
+        return not self.coordinator.dry_run
+
+    @property
+    def icon(self) -> str:
+        return "mdi:lock-open-variant" if self.is_on else "mdi:lock"
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self.coordinator.dry_run = False
+        _LOGGER.warning("Inverter Write Safety Switch turned ON: Holding register writes are now ENABLED")
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self.coordinator.dry_run = True
+        _LOGGER.info("Inverter Write Safety Switch turned OFF: Holding register writes are now LOCKED")
+        self.async_write_ha_state()
+
+
+class DeyeSolarSellSwitch(CoordinatorEntity, SwitchEntity):
+    """Solar Sell / Export Surplus holding register (0x00F7)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Solar Sell"
+    _attr_icon = "mdi:solar-power-variant"
+    _attr_device_class = SwitchDeviceClass.SWITCH
+
+    def __init__(self, coordinator, entry: ConfigEntry, sn: str):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{sn}_solar_sell"
+        self._attr_device_info = _device_info(sn)
+
+    @property
+    def is_on(self) -> bool | None:
+        val = (self.coordinator.data or {}).get("solar_sell")
+        return bool(val) if val is not None else None
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self.coordinator.async_write(REG_SOLAR_SELL_ENABLE, 1)
+        self.coordinator.async_set_updated_data({
+            **(self.coordinator.data or {}),
+            "solar_sell": True,
+        })
+        self.coordinator.mark_config_dirty()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self.coordinator.async_write(REG_SOLAR_SELL_ENABLE, 0)
+        self.coordinator.async_set_updated_data({
+            **(self.coordinator.data or {}),
+            "solar_sell": False,
+        })
+        self.coordinator.mark_config_dirty()
+
+
+class DeyeGridChargeSwitch(CoordinatorEntity, SwitchEntity):
+    """Grid Charge Master holding register (0x00E8)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Grid Charge Master"
+    _attr_icon = "mdi:battery-charging-wireless"
+    _attr_device_class = SwitchDeviceClass.SWITCH
+
+    def __init__(self, coordinator, entry: ConfigEntry, sn: str):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{sn}_grid_charge_enabled"
+        self._attr_device_info = _device_info(sn)
+
+    @property
+    def is_on(self) -> bool | None:
+        val = (self.coordinator.data or {}).get("grid_charge_enabled")
+        return bool(val) if val is not None else None
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self.coordinator.async_write(REG_GRID_CHARGE_ENABLE, 1)
+        self.coordinator.async_set_updated_data({
+            **(self.coordinator.data or {}),
+            "grid_charge_enabled": True,
+        })
+        self.coordinator.mark_config_dirty()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self.coordinator.async_write(REG_GRID_CHARGE_ENABLE, 0)
+        self.coordinator.async_set_updated_data({
+            **(self.coordinator.data or {}),
+            "grid_charge_enabled": False,
+        })
+        self.coordinator.mark_config_dirty()
+
+
+class DeyeTimeOfUseSwitch(CoordinatorEntity, SwitchEntity):
+    """Time of Use (ToU) Master holding register (0x00F8)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Time of Use"
+    _attr_icon = "mdi:clock-check-outline"
+    _attr_device_class = SwitchDeviceClass.SWITCH
+
+    def __init__(self, coordinator, entry: ConfigEntry, sn: str):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{sn}_tou_enabled"
+        self._attr_device_info = _device_info(sn)
+
+    @property
+    def is_on(self) -> bool | None:
+        val = (self.coordinator.data or {}).get("tou_enabled")
+        return bool(val) if val is not None else None
+
+    async def async_turn_on(self, **kwargs) -> None:
+        # 0x00FF enables ToU for all days of the week
+        await self.coordinator.async_write(REG_TOU_ENABLE, 0x00FF)
+        self.coordinator.async_set_updated_data({
+            **(self.coordinator.data or {}),
+            "tou_enabled": True,
+        })
+        self.coordinator.mark_config_dirty()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self.coordinator.async_write(REG_TOU_ENABLE, 0x0000)
+        self.coordinator.async_set_updated_data({
+            **(self.coordinator.data or {}),
+            "tou_enabled": False,
+        })
+        self.coordinator.mark_config_dirty()
+
+
+class _PeakShaveSwitch(CoordinatorEntity, SwitchEntity):
+    """One enable bit of the packed 0x0118 peak-shaving flag register."""
 
     _attr_has_entity_name = True
     _attr_device_class = SwitchDeviceClass.SWITCH
@@ -75,10 +218,8 @@ class _PeakShaveSwitch(CoordinatorEntity, SwitchEntity):
     async def _async_set(self, on: bool) -> None:
         raw = (self.coordinator.data or {}).get("peak_shaving_flags_raw")
         if raw is None:
-            # Without the current word we cannot safely RMW — refuse rather than
-            # write a value that could clear the other function bits.
             raise HomeAssistantError(
-                "peak-shaving flag register (0x00B2) not read yet; cannot toggle safely"
+                "Peak-shaving flag register (0x0118) not read yet; cannot toggle safely"
             )
         new_raw = set_flag(int(raw), self._mask, on)
         await self.coordinator.async_write(REG_PEAK_SHAVING_FLAGS, new_raw)
