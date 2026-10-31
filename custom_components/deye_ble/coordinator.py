@@ -27,11 +27,27 @@ from .const import (
     CLOCK_KNOWN_BAD_BACKOFF,
     CLOCK_KNOWN_BAD_CEILING,
     CLOCK_COMMIT_SETTLE,
-    CONFIG_READ_INTERVAL,
-    DEFAULT_DRY_RUN,
-    DEFAULT_KEEPALIVE,
+    CONF_CLOUD_SYNC_INTERVAL,
+    CONF_CLOUD_WINDOW,
+    CONF_CONNECTION_MODE,
+    CONF_LIVE_INTERVAL,
+    CONF_READ_ONLY,
+    CONF_REASSERT,
+    CONF_SCAN_INTERVAL,
+    CONF_SLOW_INTERVAL,
+    DEFAULT_CLOUD_SYNC_INTERVAL,
+    DEFAULT_CLOUD_WINDOW,
+    DEFAULT_CONNECTION_MODE,
+    DEFAULT_LIVE_INTERVAL,
+    DEFAULT_READ_ONLY,
     DEFAULT_REASSERT,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SLOW_INTERVAL,
     DOMAIN,
+    FAST_INTERVAL,
+    MODE_LIVE_CLOUD,
+    MODE_STANDARD,
+    READ_ONLY_ERROR,
     MAX_POLL_FAILURES,
     MAX_WRITE_ATTEMPTS,
     SYNC_CLOCK_WRONG,
@@ -44,7 +60,8 @@ from .const import (
     WRITE_RETRY_BACKOFF,
 )
 from .helpers import (
-    async_poll,
+    async_detect_profile,
+    async_read_tiers,
     clock_drift_seconds,
     clock_within_tolerance,
     detect_drift,
@@ -55,30 +72,13 @@ from .helpers import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Keys read on the slower config cycle, plus the write-only controls that only
-# exist optimistically (no read-back until P5 adds TOU reads). All are carried
-# forward across polls so a config value isn't dropped (blanking its entity) on
-# the telemetry-only cycles between config reads.
-_CONFIG_KEYS = ("work_mode", "max_sell_power", "zero_export_power")
-_CARRY_KEYS = _CONFIG_KEYS + (
-    "charge_soc", "discharge_soc", "charge_start", "charge_end",
-    "max_charge_current", "max_discharge_current",
-    "batt_shutdown_soc", "batt_low_soc", "batt_restart_soc",
-    "peak_shaving_flags_raw", "grid_peak_shaving", "gen_peak_shaving",
-    "gen_peak_power", "grid_peak_power",
-    # Clock + drift are a matched snapshot — carried together so the reported
-    # drift always belongs to the clock reading it was measured against.
-    "inverter_clock", "inverter_clock_drift", "inverter_time_of_day_drift",
-    "time_sync",
-)
-
-
 class DeyeBleCoordinator(DataUpdateCoordinator):
-    """Polls telemetry every cycle; config (work_mode + max_sell) only every
-    CONFIG_READ_INTERVAL or when mark_config_dirty() is called.
+    """Polls the LIVE tier every cycle, FAST about once a minute and SLOW on
+    the slow interval or when mark_config_dirty() is called (see
+    registers.PROFILES). Values from tiers not read this cycle carry forward.
 
-    Supports P5 write safety: dry-run (default ON), read-back verify, and
-    optional local-wins reassert.
+    Write safety: read-only lock (default ON), read-back verify, and optional
+    local-wins reassert.
     """
 
     def __init__(
@@ -86,26 +86,30 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         hass,
         address: str,
         transport_factory,  # (BLEDevice) -> DeyeBleTransport
-        scan_interval: int = 300,
-        config_interval: int = CONFIG_READ_INTERVAL,
-        dry_run: bool = DEFAULT_DRY_RUN,
+        scan_interval: int = DEFAULT_SCAN_INTERVAL,
+        slow_interval: int = DEFAULT_SLOW_INTERVAL,
+        read_only: bool = DEFAULT_READ_ONLY,
         reassert: bool = DEFAULT_REASSERT,
         max_failures: int = MAX_POLL_FAILURES,
         write_attempts: int = MAX_WRITE_ATTEMPTS,
-        keepalive: bool = DEFAULT_KEEPALIVE,
+        connection_mode: str = DEFAULT_CONNECTION_MODE,
+        live_interval: int = DEFAULT_LIVE_INTERVAL,
+        cloud_sync_interval: int = DEFAULT_CLOUD_SYNC_INTERVAL,
+        cloud_window: int = DEFAULT_CLOUD_WINDOW,
+        profile: str = r.PROFILE_THREE_PHASE,
     ) -> None:
-        super().__init__(
-            hass,
-            _LOGGER,
-            name=DOMAIN,
-            update_interval=timedelta(seconds=scan_interval),
-        )
+        super().__init__(hass, _LOGGER, name=DOMAIN)
         self._address = address
         self._transport_factory = transport_factory
-        self._config_interval = config_interval
+        self._profile = profile
+        self._scan_interval = scan_interval
+        self._live_interval = live_interval
+        self._slow_interval = slow_interval
+        self._last_fast_read = 0.0
         self._last_config_read = 0.0
-        self._config_dirty = True  # always read config on first cycle
-        self._dry_run = dry_run
+        self._config_dirty = True  # always read the slow tier on the first cycle
+        self._slow_retried = False   # a failed slow block already had its retry
+        self._read_only = read_only
         self._reassert = reassert
         self._max_failures = max_failures
         self._write_attempts = max(1, write_attempts)
@@ -119,9 +123,15 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # Set when a cancelled sync hands its Time Sync re-enable to a task that
         # waits for the BLE lock; awaited on unload so it cannot outlive us.
         self._pending_enable = None
-        self._keepalive = keepalive
-        # The single reused transport when keepalive is on; None when there is no
-        # live session (keepalive off, not yet connected, or dropped after error).
+        self._mode = connection_mode
+        self._cloud_sync_interval = cloud_sync_interval
+        self._cloud_window = cloud_window
+        # LIVE_CLOUD quiet-window schedule (monotonic); 0.0 = not yet armed.
+        self._next_quiet = 0.0
+        self._quiet_until = 0.0
+        self._apply_update_interval()
+        # The single reused transport in the LIVE modes; None when there is no
+        # live session (STANDARD, not yet connected, quiet, or dropped on error).
         self._persistent = None
         # The logger accepts ONE BLE central at a time, so polls and writes must
         # never hold a connection simultaneously, or bleak reports
@@ -129,12 +139,21 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         self._ble_lock = asyncio.Lock()
 
     @property
-    def dry_run(self) -> bool:
-        return self._dry_run
+    def read_only(self) -> bool:
+        """True while the read-only lock blocks every inverter write."""
+        return self._read_only
 
-    @dry_run.setter
-    def dry_run(self, value: bool) -> None:
-        self._dry_run = value
+    @read_only.setter
+    def read_only(self, value: bool) -> None:
+        self._read_only = value
+
+    def _refuse_if_read_only(self) -> None:
+        # Raised, not logged: the UI shows the error and the entity keeps the
+        # inverter's value instead of an optimistic one that was never written.
+        # Checked before anything touches the radio, so it works while the
+        # device is momentarily absent.
+        if self._read_only:
+            raise HomeAssistantError(READ_ONLY_ERROR)
 
     @property
     def reassert(self) -> bool:
@@ -145,17 +164,70 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         self._reassert = value
 
     @property
-    def keepalive(self) -> bool:
-        return self._keepalive
+    def connection_mode(self) -> str:
+        return self._mode
 
-    async def async_set_keepalive(self, value: bool) -> None:
-        """Toggle persistent-connection mode, releasing the held link if turned
-        off so the ESP proxy slot (and the logger's single central) frees up at
-        once."""
-        self._keepalive = value
-        if not value:
+    def _apply_update_interval(self) -> None:
+        live = self._mode != MODE_STANDARD
+        self.update_interval = timedelta(
+            seconds=self._live_interval if live else self._scan_interval
+        )
+
+    async def async_apply_options(self, options) -> None:
+        """Adopt the entry options (setup and every options change).
+
+        The read-only lock is set before the first await, so a caller that
+        awaits this has the new lock in force before any write can start.
+
+        Leaving the LIVE modes releases the held link at once, so the ESP proxy
+        slot (and the logger's single central) frees up immediately.
+        """
+        self._read_only = options.get(CONF_READ_ONLY, DEFAULT_READ_ONLY)
+        self._reassert = options.get(CONF_REASSERT, DEFAULT_REASSERT)
+        self._scan_interval = options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        self._live_interval = options.get(CONF_LIVE_INTERVAL, DEFAULT_LIVE_INTERVAL)
+        self._slow_interval = options.get(CONF_SLOW_INTERVAL, DEFAULT_SLOW_INTERVAL)
+        self._cloud_sync_interval = options.get(
+            CONF_CLOUD_SYNC_INTERVAL, DEFAULT_CLOUD_SYNC_INTERVAL
+        )
+        self._cloud_window = options.get(CONF_CLOUD_WINDOW, DEFAULT_CLOUD_WINDOW)
+        mode = options.get(CONF_CONNECTION_MODE, DEFAULT_CONNECTION_MODE)
+        if mode != self._mode:
+            self._mode = mode
+            self._next_quiet = self._quiet_until = 0.0
+        self._apply_update_interval()
+        if self._mode == MODE_STANDARD:
             async with self._ble_lock:
                 await self._drop_persistent()
+
+    def _hold_link(self) -> bool:
+        """Reuse one link: the LIVE modes, outside a quiet window."""
+        return self._mode != MODE_STANDARD and time.monotonic() >= self._quiet_until
+
+    def _in_quiet_window(self) -> bool:
+        """True while LIVE_CLOUD is giving the logger its radio back.
+
+        The first call arms the schedule, so the first window opens one
+        cloud-sync interval after polling starts, not immediately. Only polls
+        stand down: a write or clock sync the user asks for during a window
+        still runs, on a fresh session that is closed again afterwards.
+        """
+        if self._mode != MODE_LIVE_CLOUD:
+            return False
+        now = time.monotonic()
+        if now < self._quiet_until:
+            return True
+        if self._next_quiet == 0.0:
+            self._next_quiet = now + self._cloud_sync_interval
+            return False
+        if now < self._next_quiet:
+            return False
+        # The next window is a full interval after this one ENDS, so a window
+        # longer than the interval still leaves polling time between windows.
+        self._quiet_until = now + self._cloud_window
+        self._next_quiet = self._quiet_until + self._cloud_sync_interval
+        _LOGGER.debug("cloud quiet window: releasing BLE for %d s", self._cloud_window)
+        return True
 
     async def async_close(self) -> None:
         """Release any held BLE session (called on unload).
@@ -184,14 +256,14 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
     @asynccontextmanager
     async def _session(self, ble_device):
-        """Yield a connected transport following the keepalive strategy.
+        """Yield a connected transport following the connection mode.
 
-        keepalive OFF: open a fresh session and close it on exit (the resilient
-        default — every poll/write reconnects). keepalive ON: connect once and
-        reuse the link across polls and writes, but drop it on any error so the
-        next call cleanly reconnects. Callers hold ``_ble_lock`` around this.
+        STANDARD (and a LIVE_CLOUD quiet window): open a fresh session and close
+        it on exit — every poll/write reconnects. LIVE: connect once and reuse
+        the link across polls and writes, but drop it on any error so the next
+        call cleanly reconnects. Callers hold ``_ble_lock`` around this.
         """
-        if not self._keepalive:
+        if not self._hold_link():
             async with self._transport_factory(ble_device) as transport:
                 yield transport
             return
@@ -208,13 +280,51 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             await self._drop_persistent()
             raise
 
+    @property
+    def profile(self) -> str:
+        """Register map in use (see registers.PROFILES)."""
+        return self._profile
+
+    @property
+    def is_single_phase(self) -> bool:
+        return self._profile == r.PROFILE_SINGLE_PHASE
+
+    @property
+    def register_profile(self) -> r.RegisterProfile:
+        return r.PROFILES[self._profile]
+
+    async def async_detect_profile(self) -> str:
+        """Read the device type once and adopt the matching register map.
+
+        Called at setup only when the entry has no cached profile; the result
+        is stored in entry.data so later polls and writes never re-detect.
+        """
+        ble_device = self._resolve_device()
+        async with self._ble_lock:
+            async with self._session(ble_device) as transport:
+                self._profile = await async_detect_profile(transport)
+        return self._profile
+
     def mark_config_dirty(self) -> None:
         self._config_dirty = True
 
-    def _config_due(self) -> bool:
-        if self._config_dirty or self._last_config_read == 0.0:
-            return True
-        return (time.monotonic() - self._last_config_read) >= self._config_interval
+    def _due_tiers(self) -> set[str]:
+        """Tiers to read this cycle. Half a poll interval of slack keeps a tier
+        whose interval equals the poll interval from skipping on timer jitter.
+        A tier cannot run more often than the poll, so FAST is effectively
+        every max(FAST_INTERVAL, poll interval)."""
+        now = time.monotonic()
+        slack = self.update_interval.total_seconds() / 2
+        tiers = {r.TIER_LIVE}
+        if self._last_fast_read == 0.0 or now - self._last_fast_read + slack >= FAST_INTERVAL:
+            tiers.add(r.TIER_FAST)
+        if (
+            self._config_dirty
+            or self._last_config_read == 0.0
+            or now - self._last_config_read + slack >= self._slow_interval
+        ):
+            tiers.add(r.TIER_SLOW)
+        return tiers
 
     def _resolve_device(self):
         ble_device = async_ble_device_from_address(
@@ -226,17 +336,27 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict:
         try:
+            if self._in_quiet_window() and self.data is not None:
+                async with self._ble_lock:
+                    await self._drop_persistent()
+                return self.data
+
             ble_device = self._resolve_device()
 
             # Decide once per cycle — re-checking after the await could acknowledge
-            # a dirty mark that arrived mid-poll without config actually being read.
-            config_due = self._config_due()
+            # a dirty mark that arrived mid-poll without the slow tier being read.
+            tiers = self._due_tiers()
 
             async with self._ble_lock:
                 async with self._session(ble_device) as transport:
-                    data = await async_poll(transport, with_config=config_due)
+                    data, slow_complete = await async_read_tiers(
+                        transport, profile=self._profile, tiers=tiers,
+                    )
         except Exception as e:
             return self._handle_poll_failure(e)
+
+        if r.TIER_FAST in tiers:
+            self._last_fast_read = time.monotonic()
 
         # A good cycle clears the transient-failure run.
         self._consecutive_failures = 0
@@ -255,26 +375,36 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         data = self._with_sync_outcome(data)
 
-        # Carry forward config + write-only control values not present this read.
+        # Carry forward everything not read this cycle. LIVE/FAST gaps fail the
+        # whole poll, so a key missing from a good cycle belongs to a tier that
+        # was not due, or to a best-effort slow block that failed.
         prev = self.data
         if prev:
-            for key in _CARRY_KEYS:
-                if key not in data and key in prev:
-                    data[key] = prev[key]
+            for key, value in prev.items():
+                data.setdefault(key, value)
 
         # A BLE frame that decodes a lifetime total as 0 must not reach a
         # total_increasing sensor — HA would log a meter reset and count the
         # recovery as a phantom spike. Hold the last good value instead.
         data = hold_spurious_total_resets(prev, data)
 
-        # Only acknowledge the config read if it was attempted AND came back.
-        if config_due and all(key in data for key in _CONFIG_KEYS):
+        # Acknowledge the slow read once every block came back. A failed block
+        # earns ONE retry on the next poll; a block that keeps failing (an
+        # unsupported register) must not turn every poll into a slow read.
+        if r.TIER_SLOW in tiers and (slow_complete or self._slow_retried):
+            self._slow_retried = False
             self._last_config_read = time.monotonic()
             self._config_dirty = False
+        elif r.TIER_SLOW in tiers:
+            self._slow_retried = True
 
         # Reassert: if enabled, detect drift and re-apply drifted values once.
         if self._reassert and self._tracked_values:
-            drifted = detect_drift(self._tracked_values, data)
+            drifted = detect_drift(
+                self._tracked_values, data,
+                {reg: key for key, reg in self.register_profile.controls.items()}
+                if self.is_single_phase else None,
+            )
             if drifted:
                 _LOGGER.info("reassert: correcting %d drifted register(s)", len(drifted))
                 for reg, expected in drifted:
@@ -328,9 +458,9 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
     async def async_write(self, reg: int, value: int) -> None:
         """Write a single holding register over BLE.
 
-        Opens a fresh transport session and handshakes before writing.
-        When dry-run is ON, logs intent and returns without issuing a GATT write.
-        When dry-run is OFF, writes, reads back, and verifies the value.
+        Opens a transport session and handshakes before writing. While the
+        read-only lock is ON this raises without touching the radio; otherwise
+        it writes, reads back, and verifies the value.
         Transient BLE failures are retried (see :meth:`_write_regs`); the value
         is tracked for optional drift detection (reassert) once it lands.
         """
@@ -341,7 +471,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         Used where one logical control spans multiple registers (e.g. the
         discharge floor written to every non-charge TOU slot). Reuses the same
-        safety model as :meth:`async_write` — dry-run gate, per-register
+        safety model as :meth:`async_write` — read-only gate, per-register
         read-back verify, retry, and drift tracking — but opens just one
         connection so five slots don't mean five reconnects on a flaky link.
         """
@@ -406,7 +536,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         * The whole sequence runs under ONE lock, so no poll can land inside an
           open commit window. A link that ERRORS is dropped before the next
           attempt — the exception is caught outside the session context, so
-          keepalive's drop-on-error runs. A verification mismatch is different
+          the LIVE modes' drop-on-error runs. A verification mismatch is different
           and deliberately keeps the link: the link demonstrably works (we just
           read back through it), the fault is in the write, and reconnect churn
           on this logger has its own history of wedging the radio.
@@ -426,9 +556,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Raises HomeAssistantError if no attempt verifies, or if the clock landed
         but Time Sync could not be re-enabled.
         """
-        if self._dry_run:
-            _LOGGER.info("dry-run: would sync inverter clock (no GATT write issued)")
-            return
+        self._refuse_if_read_only()
 
         ble_device = self._resolve_device()
         pre_flags: int | None = None
@@ -445,12 +573,13 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         cancelled = False
 
         async with self._ble_lock:
+            self._refuse_if_read_only()  # may have changed while queued
             try:
                 if min_drift is not None:
                     try:
                         async with self._session(ble_device) as transport:
                             await transport.handshake()
-                            pre_flags = (await transport.read(r.REG_TIME_SYNC, 1))[0]
+                            pre_flags = await self._read_time_sync(transport)
                             drift = await self._read_drift(transport)
                     except Exception as exc:  # noqa: BLE001 — unknown means sync
                         _LOGGER.warning(
@@ -489,7 +618,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
                                     # untouched. Never re-read on a later
                                     # attempt: that would capture our own arming
                                     # write as the original.
-                                    pre_flags = (await transport.read(r.REG_TIME_SYNC, 1))[0]
+                                    pre_flags = await self._read_time_sync(transport)
                                 verdict = await self._commit_clock(
                                     transport, pre_flags, attempt
                                 )
@@ -652,6 +781,15 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
         return verdict, attempts
 
+    async def _read_time_sync(self, transport) -> int | None:
+        """The Time Sync panel word, or None where the profile has no commit edge.
+
+        None also means "never touched": _enable_time_sync skips the re-enable,
+        so a single-phase sync writes the clock block and nothing else.
+        """
+        reg = self.register_profile.time_sync_reg
+        return None if reg is None else (await transport.read(reg, 1))[0]
+
     async def _read_drift(self, transport) -> int | None:
         """Drift in seconds from one read, or None if it cannot be decoded.
 
@@ -660,7 +798,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         CLOCK_CACHE_MAX_AGE stale, and the caller compensates with a margin
         rather than pretending the number is exact.
         """
-        frame = await transport.read(r.REG_CLOCK, r.CLOCK_WORD_COUNT)
+        frame = await transport.read(self.register_profile.clock_reg, r.CLOCK_WORD_COUNT)
         clock = r.decode_clock(frame)
         if clock is None:
             return None
@@ -672,9 +810,11 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Transport errors propagate: the caller needs them to leave the session
         context so a broken link is dropped before the next attempt.
         """
-        await transport.write(
-            r.REG_TIME_SYNC, r.set_flag(pre_flags, r.TIME_SYNC_MASK, True)
-        )
+        time_sync_reg = self.register_profile.time_sync_reg
+        if time_sync_reg is not None:
+            await transport.write(
+                time_sync_reg, r.set_flag(pre_flags, r.TIME_SYNC_MASK, True)
+            )
         # See CLOCK_SYNC_SETTLE: evidence for this gap is one rehearsal each
         # way, so it is deliberate but honestly unconfirmed.
         await asyncio.sleep(CLOCK_SYNC_SETTLE)
@@ -692,7 +832,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # the feature more brittle than it was before the guard existed — an
         # inverter we cannot read is exactly one whose clock still needs setting.
         try:
-            pre_frame = tuple(await transport.read(r.REG_CLOCK, r.CLOCK_WORD_COUNT))
+            pre_frame = tuple(await transport.read(self.register_profile.clock_reg, r.CLOCK_WORD_COUNT))
         except Exception as exc:  # noqa: BLE001 — the guard is best-effort
             _LOGGER.debug("no pre-write frame for the cache guard: %s", exc)
             pre_frame = None
@@ -704,11 +844,12 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # construction — there is no longer a gap between register writes for an
         # error to land in.
         target = dt_util.now()
-        await transport.write_block(r.REG_CLOCK, r.encode_clock(target))
+        await transport.write_block(self.register_profile.clock_reg, r.encode_clock(target))
 
-        await transport.write(
-            r.REG_TIME_SYNC, r.set_flag(pre_flags, r.TIME_SYNC_MASK, False)
-        )
+        if time_sync_reg is not None:
+            await transport.write(
+                time_sync_reg, r.set_flag(pre_flags, r.TIME_SYNC_MASK, False)
+            )
 
         verdict = await self._verify_commit(transport, attempt, pre_frame)
         if verdict == VERIFY_OK:
@@ -732,7 +873,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         the bounded extension.
         """
         await asyncio.sleep(CLOCK_COMMIT_SETTLE)
-        frame = await transport.read(r.REG_CLOCK, r.CLOCK_WORD_COUNT)
+        frame = await transport.read(self.register_profile.clock_reg, r.CLOCK_WORD_COUNT)
 
         if pre_frame is not None and tuple(frame) == pre_frame:
             # The RTC ticks unconditionally, so a byte-identical frame cannot be
@@ -838,7 +979,8 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         async with self._session(ble_device) as transport:
             await transport.handshake()
             await transport.write(
-                r.REG_TIME_SYNC, r.set_flag(pre_flags, r.TIME_SYNC_MASK, True)
+                self.register_profile.time_sync_reg,
+                r.set_flag(pre_flags, r.TIME_SYNC_MASK, True),
             )
 
     def _record_sync_outcome(self, result: str, attempts: int) -> None:
@@ -883,14 +1025,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         rather than burning the retry budget. The value is tracked for drift
         detection only after the whole batch has verified.
         """
-        # Dry-run is the safety default: never touch the radio, just log intent.
-        # Checked first so it works even when the device is momentarily absent.
-        if self._dry_run:
-            for reg, value in regs.items():
-                _LOGGER.info(
-                    "dry-run: would write reg 0x%04X = %d (no GATT write issued)", reg, value
-                )
-            return
+        self._refuse_if_read_only()
 
         ble_device = async_ble_device_from_address(
             self.hass, self._address, connectable=True
@@ -902,6 +1037,9 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             try:
                 # Serialize against the poll — one BLE central at a time.
                 async with self._ble_lock:
+                    # Again under the lock: Read Only may have been switched on
+                    # while this write was queued behind a poll.
+                    self._refuse_if_read_only()
                     async with self._session(ble_device) as transport:
                         await transport.handshake()
                         for reg, value in regs.items():

@@ -58,7 +58,7 @@ class FakeTransport:
 @pytest.mark.asyncio
 async def test_async_poll_returns_all_telemetry_keys():
     transport = FakeTransport()
-    data = await async_poll(transport, with_config=False)
+    data = await async_poll(transport, tiers={r.TIER_LIVE, r.TIER_FAST})
 
     # Must have all telemetry keys from a full READ_BLOCKS poll
     assert "solar_power" in data
@@ -77,7 +77,7 @@ async def test_async_poll_returns_all_telemetry_keys():
 @pytest.mark.asyncio
 async def test_async_poll_known_values():
     transport = FakeTransport()
-    data = await async_poll(transport, with_config=False)
+    data = await async_poll(transport, tiers={r.TIER_LIVE, r.TIER_FAST})
 
     # Spot-check against known decoded values from test_registers
     assert data["solar_power"] == 1783
@@ -94,7 +94,7 @@ async def test_async_poll_with_config_includes_work_mode_and_max_sell():
     control_frames[0x008E] = "+ok=01030400000064FBD8"
     transport._frames = control_frames
 
-    data = await async_poll(transport, with_config=True)
+    data = await async_poll(transport)
 
     assert data["work_mode"] == "Selling First"
     assert data["max_sell_power"] == 100
@@ -103,7 +103,7 @@ async def test_async_poll_with_config_includes_work_mode_and_max_sell():
 @pytest.mark.asyncio
 async def test_async_poll_without_config_excludes_work_mode():
     transport = FakeTransport()
-    data = await async_poll(transport, with_config=False)
+    data = await async_poll(transport, tiers={r.TIER_LIVE, r.TIER_FAST})
 
     assert "work_mode" not in data
     assert "max_sell_power" not in data
@@ -119,10 +119,10 @@ async def test_async_poll_calls_handshake():
 @pytest.mark.asyncio
 async def test_async_poll_reads_all_blocks():
     transport = FakeTransport()
-    await async_poll(transport, with_config=False)
+    await async_poll(transport, tiers={r.TIER_LIVE, r.TIER_FAST})
 
     starts = [addr for addr, _ in transport.reads]
-    for block_start, _ in r.READ_BLOCKS:
+    for block_start, _ in r.LIVE_BLOCKS + r.FAST_BLOCKS:
         assert block_start in starts
 
 
@@ -133,12 +133,12 @@ async def test_async_poll_reads_control_blocks_when_with_config():
     control_frames[0x008E] = "+ok=01030400000064FBD8"
     transport._frames = control_frames
 
-    await async_poll(transport, with_config=True)
+    await async_poll(transport)
 
     starts = [addr for addr, _ in transport.reads]
-    for block_start, _ in r.READ_BLOCKS:
+    for block_start, _ in r.LIVE_BLOCKS + r.FAST_BLOCKS:
         assert block_start in starts
-    for block_start, _ in r.CONTROL_BLOCKS:
+    for block_start, _ in r.SLOW_BLOCKS:
         assert block_start in starts
 
 
@@ -160,7 +160,7 @@ async def test_async_poll_propagates_read_failure():
 async def test_async_poll_config_block_failure_is_non_fatal():
     # A control-block read failure must NOT discard a good telemetry cycle.
     transport = FakeTransport(fail_on_block=0x008E)
-    data = await async_poll(transport, with_config=True)
+    data = await async_poll(transport)
     assert data["solar_power"] == 1783      # telemetry still present
     assert "work_mode" not in data          # config omitted, not fabricated
     assert "max_sell_power" not in data

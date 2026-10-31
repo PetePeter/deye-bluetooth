@@ -5,22 +5,60 @@ DOMAIN = "deye_ble"
 
 CONF_LOGGER_SN = "logger_sn"
 CONF_ADDRESS = "address"
-CONF_DRY_RUN = "dry_run"
+CONF_PROFILE = "profile"   # entry.data: register map, detected once at setup
+CONF_READ_ONLY = "read_only"
 CONF_REASSERT = "reassert"
 CONF_SCAN_INTERVAL = "scan_interval"
-CONF_KEEPALIVE = "keepalive"
+CONF_CONNECTION_MODE = "connection_mode"
+CONF_LIVE_INTERVAL = "live_interval"
+CONF_SLOW_INTERVAL = "slow_interval"
+CONF_CLOUD_SYNC_INTERVAL = "cloud_sync_interval"
+CONF_CLOUD_WINDOW = "cloud_window"
+# Pre-0.2 option keys, migrated by helpers.migrate_options.
+LEGACY_CONF_DRY_RUN = "dry_run"
+LEGACY_CONF_KEEPALIVE = "keepalive"
 
-DEFAULT_DRY_RUN = True   # writes blocked until user explicitly enables
-DEFAULT_REASSERT = False  # local-wins reassert is opt-in
-# Persistent BLE connection: reuse one link instead of reconnecting per poll.
-# Opt-in — off by default so it can't hold an ESP proxy slot (or the logger's
-# single central) until the user explicitly enables it.
-DEFAULT_KEEPALIVE = False
+DEFAULT_READ_ONLY = True   # writes blocked until the user explicitly unlocks
+DEFAULT_REASSERT = False   # local-wins reassert is opt-in
 
-DEFAULT_SCAN_INTERVAL = 60            # seconds — telemetry poll (user-configurable)
+# How the BLE link is used. STANDARD reconnects every poll, leaving the
+# logger's shared radio idle so the Deye Cloud upload is unaffected. Both LIVE
+# modes hold one link and poll fast; LIVE_CLOUD drops it for a quiet window
+# every cloud-sync interval so the logger can upload, LIVE_LOCAL never does.
+MODE_STANDARD = "standard"
+MODE_LIVE_CLOUD = "live_cloud"
+MODE_LIVE_LOCAL = "live_local"
+CONNECTION_MODE_LABELS = {
+    MODE_STANDARD: "Standard (reconnect each poll)",
+    MODE_LIVE_CLOUD: "Live, with Deye Cloud",
+    MODE_LIVE_LOCAL: "Live, local only (no cloud)",
+}
+DEFAULT_CONNECTION_MODE = MODE_STANDARD
+
+DEFAULT_SCAN_INTERVAL = 60            # seconds — STANDARD poll
 MIN_SCAN_INTERVAL = 30               # floor to protect BLE reconnect stability
 MAX_SCAN_INTERVAL = 600
-CONFIG_READ_INTERVAL = 900           # seconds — work_mode + max_sell re-read
+DEFAULT_LIVE_INTERVAL = 5             # seconds — poll in the LIVE modes
+MIN_LIVE_INTERVAL = 2
+MAX_LIVE_INTERVAL = 60
+
+FAST_INTERVAL = 60                    # seconds — FAST tier (fixed)
+DEFAULT_SLOW_INTERVAL = 300           # seconds — SLOW tier (settings, totals)
+MIN_SLOW_INTERVAL = 300
+MAX_SLOW_INTERVAL = 3600
+
+# LIVE_CLOUD quiet window: 15 s every 5 min was enough on a DL1000B (PR #6);
+# 30 s leaves margin for a slow TLS handshake.
+DEFAULT_CLOUD_SYNC_INTERVAL = 300
+MIN_CLOUD_SYNC_INTERVAL = 60
+MAX_CLOUD_SYNC_INTERVAL = 3600
+DEFAULT_CLOUD_WINDOW = 30
+MIN_CLOUD_WINDOW = 10
+MAX_CLOUD_WINDOW = 120
+
+READ_ONLY_ERROR = (
+    "Inverter write blocked: turn off 'Read Only' before changing inverter settings"
+)
 
 # How many consecutive BLE poll failures to ride out before surfacing the
 # entities as unavailable. Below this, the last good values are kept so a brief

@@ -16,21 +16,43 @@ from homeassistant.components.bluetooth import (
 )
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.helpers.device_registry import format_mac
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+)
 
 from .const import (
     CONF_ADDRESS,
-    CONF_DRY_RUN,
-    CONF_KEEPALIVE,
+    CONF_CLOUD_SYNC_INTERVAL,
+    CONF_CLOUD_WINDOW,
+    CONF_CONNECTION_MODE,
+    CONF_LIVE_INTERVAL,
     CONF_LOGGER_SN,
+    CONF_READ_ONLY,
     CONF_REASSERT,
     CONF_SCAN_INTERVAL,
-    DEFAULT_DRY_RUN,
-    DEFAULT_KEEPALIVE,
+    CONF_SLOW_INTERVAL,
+    CONNECTION_MODE_LABELS,
+    DEFAULT_CLOUD_SYNC_INTERVAL,
+    DEFAULT_CLOUD_WINDOW,
+    DEFAULT_CONNECTION_MODE,
+    DEFAULT_LIVE_INTERVAL,
+    DEFAULT_READ_ONLY,
     DEFAULT_REASSERT,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SLOW_INTERVAL,
     DOMAIN,
+    MAX_CLOUD_SYNC_INTERVAL,
+    MAX_CLOUD_WINDOW,
+    MAX_LIVE_INTERVAL,
     MAX_SCAN_INTERVAL,
+    MAX_SLOW_INTERVAL,
+    MIN_CLOUD_SYNC_INTERVAL,
+    MIN_CLOUD_WINDOW,
+    MIN_LIVE_INTERVAL,
     MIN_SCAN_INTERVAL,
+    MIN_SLOW_INTERVAL,
 )
 from .helpers import validate_logger_sn
 
@@ -167,30 +189,41 @@ class DeyeBleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
 
+def _int_range(lo: int, hi: int):
+    return vol.All(vol.Coerce(int), vol.Range(min=lo, max=hi))
+
+
 class DeyeBleOptionsFlowHandler(config_entries.OptionsFlow):
-    """Options flow for scan interval, dry-run, reassert and keepalive."""
+    """Options: read-only lock, connection mode, poll tiers, reassert.
+
+    The same options back the CONFIG entities (switch/select/number), so the
+    form and the dashboard always agree.
+    """
 
     async def async_step_init(self, user_input: dict | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            return self.async_create_entry(data={**self.config_entry.options, **user_input})
 
         current = self.config_entry.options
+
+        def opt(key, default):
+            return vol.Required(key, default=current.get(key, default))
+
         schema = vol.Schema({
-            vol.Required(
-                CONF_SCAN_INTERVAL,
-                default=current.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-            ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)),
-            vol.Required(
-                CONF_DRY_RUN,
-                default=current.get(CONF_DRY_RUN, DEFAULT_DRY_RUN),
-            ): bool,
-            vol.Required(
-                CONF_REASSERT,
-                default=current.get(CONF_REASSERT, DEFAULT_REASSERT),
-            ): bool,
-            vol.Required(
-                CONF_KEEPALIVE,
-                default=current.get(CONF_KEEPALIVE, DEFAULT_KEEPALIVE),
-            ): bool,
+            opt(CONF_READ_ONLY, DEFAULT_READ_ONLY): bool,
+            opt(CONF_CONNECTION_MODE, DEFAULT_CONNECTION_MODE): SelectSelector(
+                SelectSelectorConfig(options=[
+                    SelectOptionDict(value=mode, label=label)
+                    for mode, label in CONNECTION_MODE_LABELS.items()
+                ])
+            ),
+            opt(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL): _int_range(MIN_SCAN_INTERVAL, MAX_SCAN_INTERVAL),
+            opt(CONF_LIVE_INTERVAL, DEFAULT_LIVE_INTERVAL): _int_range(MIN_LIVE_INTERVAL, MAX_LIVE_INTERVAL),
+            opt(CONF_SLOW_INTERVAL, DEFAULT_SLOW_INTERVAL): _int_range(MIN_SLOW_INTERVAL, MAX_SLOW_INTERVAL),
+            opt(CONF_CLOUD_SYNC_INTERVAL, DEFAULT_CLOUD_SYNC_INTERVAL): _int_range(
+                MIN_CLOUD_SYNC_INTERVAL, MAX_CLOUD_SYNC_INTERVAL
+            ),
+            opt(CONF_CLOUD_WINDOW, DEFAULT_CLOUD_WINDOW): _int_range(MIN_CLOUD_WINDOW, MAX_CLOUD_WINDOW),
+            opt(CONF_REASSERT, DEFAULT_REASSERT): bool,
         })
         return self.async_show_form(step_id="init", data_schema=schema)

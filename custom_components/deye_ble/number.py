@@ -6,24 +6,35 @@ import logging
 from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_LOGGER_SN, DEVICE_NAME, DOMAIN
-from .registers import (
-    DISCHARGE_SOC_REGS,
-    REG_BATT_LOW_SOC,
-    REG_BATT_RESTART_SOC,
-    REG_BATT_SHUTDOWN_SOC,
-    REG_CHARGE_SOC,
-    REG_GEN_PEAK_POWER,
-    REG_GRID_PEAK_POWER,
-    REG_MAX_CHARGE_CURRENT,
-    REG_MAX_DISCHARGE_CURRENT,
-    REG_MAX_SELL_POWER,
-    REG_ZERO_EXPORT_POWER,
+from .const import (
+    CONF_CLOUD_SYNC_INTERVAL,
+    CONF_CLOUD_WINDOW,
+    CONF_LIVE_INTERVAL,
+    CONF_LOGGER_SN,
+    CONF_SCAN_INTERVAL,
+    CONF_SLOW_INTERVAL,
+    DEFAULT_CLOUD_SYNC_INTERVAL,
+    DEFAULT_CLOUD_WINDOW,
+    DEFAULT_LIVE_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SLOW_INTERVAL,
+    DOMAIN,
+    MAX_CLOUD_SYNC_INTERVAL,
+    MAX_CLOUD_WINDOW,
+    MAX_LIVE_INTERVAL,
+    MAX_SCAN_INTERVAL,
+    MAX_SLOW_INTERVAL,
+    MIN_CLOUD_SYNC_INTERVAL,
+    MIN_CLOUD_WINDOW,
+    MIN_LIVE_INTERVAL,
+    MIN_SCAN_INTERVAL,
+    MIN_SLOW_INTERVAL,
 )
+from .entity import OptionEntity, device_info
+from .registers import DISCHARGE_SOC_REGS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,47 +44,35 @@ async def async_setup_entry(
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
     sn = entry.data[CONF_LOGGER_SN]
-    async_add_entities([
-        DeyeMaxSellPower(coordinator, entry, sn),
-        DeyeZeroExportPower(coordinator, entry, sn),
-        DeyeChargeSoc(coordinator, entry, sn),
-        DeyeDischargeSoc(coordinator, entry, sn),
-        DeyeMaxChargeCurrent(coordinator, entry, sn),
-        DeyeMaxDischargeCurrent(coordinator, entry, sn),
-        DeyeBattShutdownSoc(coordinator, entry, sn),
-        DeyeBattLowSoc(coordinator, entry, sn),
-        DeyeBattRestartSoc(coordinator, entry, sn),
-        DeyeGridPeakPower(coordinator, entry, sn),
-        DeyeGenPeakPower(coordinator, entry, sn),
-    ])
-
-
-def _device_info(sn: str) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={(DOMAIN, sn)},
-        name=DEVICE_NAME,
-        manufacturer="Deye",
-        model=sn,
-    )
+    controls = coordinator.register_profile.controls
+    entities: list[NumberEntity] = [cls(coordinator, entry) for cls in OPTION_NUMBERS]
+    entities += [
+        cls(coordinator, entry, sn) for cls in REGISTER_NUMBERS if cls._data_key in controls
+    ]
+    if not coordinator.is_single_phase:
+        # Three-phase TOU layout only: the floor spans five slot registers.
+        entities.append(DeyeDischargeSoc(coordinator, entry, sn))
+    async_add_entities(entities)
 
 
 class _SingleRegisterNumber(CoordinatorEntity, NumberEntity):
     """Write-through number backed by a single holding register.
 
-    Subclasses declare ``_register`` (address), ``_data_key`` (coordinator-data
-    key + unique-id suffix) and the usual NumberEntity presentation attrs.
-    Setting the value writes the register, optimistically mirrors it into
-    coordinator data, and marks config dirty for reassert/drift handling.
+    Subclasses declare ``_data_key`` (coordinator-data key + unique-id suffix)
+    and the usual NumberEntity presentation attrs; the register comes from the
+    profile control table. Setting the value writes the register (refused by
+    the read-only lock), mirrors it into coordinator data, and marks config
+    dirty for reassert/drift handling.
     """
 
     _attr_has_entity_name = True
-    _register: int
     _data_key: str
 
     def __init__(self, coordinator, entry: ConfigEntry, sn: str):
         super().__init__(coordinator)
+        self._register = coordinator.register_profile.controls[self._data_key]
         self._attr_unique_id = f"{sn}_{self._data_key}"
-        self._attr_device_info = _device_info(sn)
+        self._attr_device_info = device_info(sn)
 
     @property
     def native_value(self) -> float | None:
@@ -90,7 +89,6 @@ class _SingleRegisterNumber(CoordinatorEntity, NumberEntity):
 
 
 class DeyeMaxSellPower(_SingleRegisterNumber):
-    _register = REG_MAX_SELL_POWER
     _data_key = "max_sell_power"
     _attr_name = "Max Sell Power"
     _attr_icon = "mdi:transmission-tower-export"
@@ -103,27 +101,29 @@ class DeyeMaxSellPower(_SingleRegisterNumber):
 
 
 class DeyeZeroExportPower(_SingleRegisterNumber):
-    """Zero-export power / grid-compensation offset (W). Reg 0x0068, signed.
+    """Zero-export power / grid-compensation offset (W).
 
-    In Zero Export to CT this biases the CT target: positive holds a small grid
-    import; a *negative* value (blocked by the phone app but accepted by the
-    inverter — live-probed) forces export/feed-in up to that magnitude.
+    Three-phase (0x0068, signed): in Zero Export to CT this biases the CT
+    target; positive holds a small grid import, a *negative* value (blocked by
+    the phone app but accepted by the inverter — live-probed) forces export up
+    to that magnitude. Single-phase (206) decodes unsigned, so its floor is 0.
     """
 
-    _register = REG_ZERO_EXPORT_POWER
     _data_key = "zero_export_power"
     _attr_name = "Zero Export Power"
     _attr_icon = "mdi:transmission-tower-import"
     _attr_native_unit_of_measurement = "W"
-    _attr_native_min_value = -15000
     _attr_native_max_value = 100
     _attr_native_step = 1
     _attr_mode = NumberMode.BOX
     _attr_device_class = NumberDeviceClass.POWER
 
+    @property
+    def native_min_value(self) -> float:
+        return 0 if self.coordinator.is_single_phase else -15000
+
 
 class DeyeChargeSoc(_SingleRegisterNumber):
-    _register = REG_CHARGE_SOC
     _data_key = "charge_soc"
     _attr_name = "Charge Target SOC"
     _attr_icon = "mdi:battery-arrow-up"
@@ -154,7 +154,7 @@ class DeyeDischargeSoc(CoordinatorEntity, NumberEntity):
     def __init__(self, coordinator, entry: ConfigEntry, sn: str):
         super().__init__(coordinator)
         self._attr_unique_id = f"{sn}_discharge_soc"
-        self._attr_device_info = _device_info(sn)
+        self._attr_device_info = device_info(sn)
 
     @property
     def native_value(self) -> float | None:
@@ -173,7 +173,6 @@ class DeyeDischargeSoc(CoordinatorEntity, NumberEntity):
 class DeyeMaxChargeCurrent(_SingleRegisterNumber):
     """Battery max charge current (A) — inverter setpoint at register 0x006C."""
 
-    _register = REG_MAX_CHARGE_CURRENT
     _data_key = "max_charge_current"
     _attr_name = "Max Charge Current"
     _attr_icon = "mdi:battery-arrow-up"
@@ -188,7 +187,6 @@ class DeyeMaxChargeCurrent(_SingleRegisterNumber):
 class DeyeMaxDischargeCurrent(_SingleRegisterNumber):
     """Battery max discharge current (A) — inverter setpoint at register 0x006D."""
 
-    _register = REG_MAX_DISCHARGE_CURRENT
     _data_key = "max_discharge_current"
     _attr_name = "Max Discharge Current"
     _attr_icon = "mdi:battery-arrow-down"
@@ -203,7 +201,6 @@ class DeyeMaxDischargeCurrent(_SingleRegisterNumber):
 class DeyeBattShutdownSoc(_SingleRegisterNumber):
     """Battery shutdown SOC (%) — inverter cuts the battery below this. Reg 0x0073."""
 
-    _register = REG_BATT_SHUTDOWN_SOC
     _data_key = "batt_shutdown_soc"
     _attr_name = "Battery Shutdown SOC"
     _attr_icon = "mdi:battery-off"
@@ -217,7 +214,6 @@ class DeyeBattShutdownSoc(_SingleRegisterNumber):
 class DeyeBattLowSoc(_SingleRegisterNumber):
     """Battery low-warning SOC (%). Reg 0x0075."""
 
-    _register = REG_BATT_LOW_SOC
     _data_key = "batt_low_soc"
     _attr_name = "Battery Low SOC"
     _attr_icon = "mdi:battery-alert"
@@ -231,7 +227,6 @@ class DeyeBattLowSoc(_SingleRegisterNumber):
 class DeyeBattRestartSoc(_SingleRegisterNumber):
     """Battery restart SOC (%) — inverter re-enables the battery at this. Reg 0x0074."""
 
-    _register = REG_BATT_RESTART_SOC
     _data_key = "batt_restart_soc"
     _attr_name = "Battery Restart SOC"
     _attr_icon = "mdi:battery-heart-variant"
@@ -246,7 +241,6 @@ class DeyeGridPeakPower(_SingleRegisterNumber):
     """Grid peak-shaving power cap (W) — max grid import while grid shaving is on.
     Reg 0x00BF. The enable bit lives in 0x00B2 (see the Grid Peak Shaving switch)."""
 
-    _register = REG_GRID_PEAK_POWER
     _data_key = "grid_peak_power"
     _attr_name = "Grid Peak Shave Power"
     _attr_icon = "mdi:transmission-tower"
@@ -262,7 +256,6 @@ class DeyeGenPeakPower(_SingleRegisterNumber):
     """Generator peak-shaving power cap (W). Reg 0x00BE. Enable bit in 0x00B2
     (see the Gen Peak Shaving switch)."""
 
-    _register = REG_GEN_PEAK_POWER
     _data_key = "gen_peak_power"
     _attr_name = "Gen Peak Shave Power"
     _attr_icon = "mdi:engine"
@@ -272,3 +265,81 @@ class DeyeGenPeakPower(_SingleRegisterNumber):
     _attr_native_step = 100
     _attr_mode = NumberMode.BOX
     _attr_device_class = NumberDeviceClass.POWER
+
+
+class DeyeGridChargeCurrent(_SingleRegisterNumber):
+    """Grid charge current limit (A)."""
+
+    _data_key = "grid_charge_current"
+    _attr_name = "Grid Charge Current"
+    _attr_icon = "mdi:transmission-tower-import"
+    _attr_native_unit_of_measurement = "A"
+    _attr_native_min_value = 0
+    _attr_native_max_value = 280
+    _attr_native_step = 1
+    _attr_mode = NumberMode.BOX
+    _attr_device_class = NumberDeviceClass.CURRENT
+
+
+REGISTER_NUMBERS: list[type[_SingleRegisterNumber]] = [
+    DeyeMaxSellPower, DeyeZeroExportPower, DeyeChargeSoc, DeyeMaxChargeCurrent,
+    DeyeMaxDischargeCurrent, DeyeBattShutdownSoc, DeyeBattLowSoc, DeyeBattRestartSoc,
+    DeyeGridPeakPower, DeyeGenPeakPower, DeyeGridChargeCurrent,
+]
+
+
+# --- Option-backed CONFIG numbers (polling + connection) ---------------------
+
+class _OptionNumber(OptionEntity, NumberEntity):
+    _attr_native_unit_of_measurement = "s"
+    _attr_device_class = NumberDeviceClass.DURATION
+    _attr_mode = NumberMode.BOX
+    _attr_native_step = 1
+
+    @property
+    def native_value(self) -> float:
+        return float(self.option_value)
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.async_set_option(int(value))
+
+
+class DeyeScanInterval(_OptionNumber):
+    _option, _default = CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+    _attr_name = "Standard Poll Interval"
+    _attr_icon = "mdi:timer-outline"
+    _attr_native_min_value, _attr_native_max_value = MIN_SCAN_INTERVAL, MAX_SCAN_INTERVAL
+
+
+class DeyeLiveInterval(_OptionNumber):
+    _option, _default = CONF_LIVE_INTERVAL, DEFAULT_LIVE_INTERVAL
+    _attr_name = "Live Poll Interval"
+    _attr_icon = "mdi:timer-play-outline"
+    _attr_native_min_value, _attr_native_max_value = MIN_LIVE_INTERVAL, MAX_LIVE_INTERVAL
+
+
+class DeyeSlowInterval(_OptionNumber):
+    _option, _default = CONF_SLOW_INTERVAL, DEFAULT_SLOW_INTERVAL
+    _attr_name = "Slow Poll Interval"
+    _attr_icon = "mdi:timer-sand"
+    _attr_native_min_value, _attr_native_max_value = MIN_SLOW_INTERVAL, MAX_SLOW_INTERVAL
+    _attr_native_step = 60
+
+
+class DeyeCloudSyncInterval(_OptionNumber):
+    _option, _default = CONF_CLOUD_SYNC_INTERVAL, DEFAULT_CLOUD_SYNC_INTERVAL
+    _attr_name = "Cloud Quiet Window Every"
+    _attr_icon = "mdi:cloud-sync-outline"
+    _attr_native_min_value, _attr_native_max_value = MIN_CLOUD_SYNC_INTERVAL, MAX_CLOUD_SYNC_INTERVAL
+
+
+class DeyeCloudWindow(_OptionNumber):
+    _option, _default = CONF_CLOUD_WINDOW, DEFAULT_CLOUD_WINDOW
+    _attr_name = "Cloud Quiet Window Length"
+    _attr_icon = "mdi:cloud-clock-outline"
+    _attr_native_min_value, _attr_native_max_value = MIN_CLOUD_WINDOW, MAX_CLOUD_WINDOW
+
+
+OPTION_NUMBERS: list[type[_OptionNumber]] = [
+    DeyeScanInterval, DeyeLiveInterval, DeyeSlowInterval, DeyeCloudSyncInterval, DeyeCloudWindow,
+]

@@ -5,11 +5,12 @@ Uses WriteableFakeTransport — no bleak.
 """
 from __future__ import annotations
 
-import logging
 
 import pytest
 
 pytest.importorskip("homeassistant")
+
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.deye_ble import protocol as p
 from custom_components.deye_ble.registers import DISCHARGE_SOC_REGS, REG_MAX_SELL_POWER
@@ -93,9 +94,9 @@ def _stub_ble_device(monkeypatch, *, present=True):
 
 # --- dry-run tests -----------------------------------------------------------
 
-class TestDryRun:
+class TestReadOnly:
     @pytest.mark.asyncio
-    async def test_dry_run_on_blocks_write(self):
+    async def test_read_only_refuses_write_before_touching_the_radio(self):
         from custom_components.deye_ble.coordinator import DeyeBleCoordinator
 
         transport = WriteableFakeTransport()
@@ -103,32 +104,21 @@ class TestDryRun:
             hass=None,
             address="AA:BB:CC:DD:EE:FF",
             transport_factory=lambda _dev: transport,
-            dry_run=True,
+            read_only=True,
         )
-        coordinator._resolve_device = lambda: None
-
-        await coordinator.async_write(REG_MAX_SELL_POWER, 200)
-        assert transport.writes == []
-
-    @pytest.mark.asyncio
-    async def test_dry_run_on_logs_intent(self, caplog):
-        from custom_components.deye_ble.coordinator import DeyeBleCoordinator
-
-        transport = WriteableFakeTransport()
-        coordinator = DeyeBleCoordinator(
-            hass=None,
-            address="AA:BB:CC:DD:EE:FF",
-            transport_factory=lambda _dev: transport,
-            dry_run=True,
-        )
-        coordinator._resolve_device = lambda: None
-
-        with caplog.at_level(logging.INFO, logger="custom_components.deye_ble.coordinator"):
+        # No device stub: the refusal must not depend on the device being found.
+        with pytest.raises(HomeAssistantError, match="Read Only"):
             await coordinator.async_write(REG_MAX_SELL_POWER, 200)
+        assert transport.writes == [] and transport.reads == []
 
-        assert "0x008F" in caplog.text
-        assert "200" in caplog.text
-        assert "dry-run" in caplog.text.lower()
+    @pytest.mark.asyncio
+    async def test_read_only_is_the_default(self):
+        from custom_components.deye_ble.coordinator import DeyeBleCoordinator
+
+        coordinator = DeyeBleCoordinator(
+            hass=None, address="AA:BB:CC:DD:EE:FF", transport_factory=lambda _dev: None,
+        )
+        assert coordinator.read_only is True
 
     @pytest.mark.asyncio
     async def test_dry_run_off_calls_write(self, monkeypatch):
@@ -141,7 +131,7 @@ class TestDryRun:
             hass=None,
             address="AA:BB:CC:DD:EE:FF",
             transport_factory=lambda _dev: transport,
-            dry_run=False,
+            read_only=False,
         )
         coordinator._resolve_device = lambda: None
         _stub_ble_device(monkeypatch)
@@ -161,7 +151,7 @@ class TestDryRun:
             hass=None,
             address="AA:BB:CC:DD:EE:FF",
             transport_factory=lambda _dev: transport,
-            dry_run=False,
+            read_only=False,
         )
         coordinator._resolve_device = lambda: None
         _stub_ble_device(monkeypatch)
@@ -180,7 +170,7 @@ class TestDryRun:
             hass=None,
             address="AA:BB:CC:DD:EE:FF",
             transport_factory=lambda _dev: transport,
-            dry_run=False,
+            read_only=False,
         )
         coordinator._resolve_device = lambda: None
         _stub_ble_device(monkeypatch)
@@ -192,14 +182,14 @@ class TestDryRun:
 # --- async_write_many (discharge SOC multi-slot write) -----------------------
 
 class TestWriteMany:
-    def _coordinator(self, transport, *, dry_run, monkeypatch=None):
+    def _coordinator(self, transport, *, read_only, monkeypatch=None):
         from custom_components.deye_ble.coordinator import DeyeBleCoordinator
 
         coordinator = DeyeBleCoordinator(
             hass=None,
             address="AA:BB:CC:DD:EE:FF",
             transport_factory=lambda _dev: transport,
-            dry_run=dry_run,
+            read_only=read_only,
         )
         coordinator._resolve_device = lambda: None
         # The write path resolves the device via the HA bluetooth helper, which
@@ -209,23 +199,21 @@ class TestWriteMany:
         return coordinator
 
     @pytest.mark.asyncio
-    async def test_dry_run_on_writes_nothing_logs_each(self, caplog):
+    async def test_read_only_refuses_the_whole_batch(self):
         transport = WriteableFakeTransport()
-        coordinator = self._coordinator(transport, dry_run=True)
+        coordinator = self._coordinator(transport, read_only=True)
 
-        with caplog.at_level(logging.INFO, logger="custom_components.deye_ble.coordinator"):
+        with pytest.raises(HomeAssistantError, match="Read Only"):
             await coordinator.async_write_many({reg: 20 for reg in DISCHARGE_SOC_REGS})
 
         assert transport.writes == []
-        for reg in DISCHARGE_SOC_REGS:
-            assert f"0x{reg:04X}" in caplog.text
 
     @pytest.mark.asyncio
     async def test_dry_run_off_writes_all_and_verifies(self, monkeypatch):
         transport = WriteableFakeTransport(
             readback_values={reg: 20 for reg in DISCHARGE_SOC_REGS},
         )
-        coordinator = self._coordinator(transport, dry_run=False, monkeypatch=monkeypatch)
+        coordinator = self._coordinator(transport, read_only=False, monkeypatch=monkeypatch)
 
         await coordinator.async_write_many({reg: 20 for reg in DISCHARGE_SOC_REGS})
 
@@ -237,7 +225,7 @@ class TestWriteMany:
         readback = {reg: 20 for reg in DISCHARGE_SOC_REGS}
         readback[DISCHARGE_SOC_REGS[2]] = 99
         transport = WriteableFakeTransport(readback_values=readback)
-        coordinator = self._coordinator(transport, dry_run=False, monkeypatch=monkeypatch)
+        coordinator = self._coordinator(transport, read_only=False, monkeypatch=monkeypatch)
 
         with pytest.raises(ValueError, match="readback"):
             await coordinator.async_write_many({reg: 20 for reg in DISCHARGE_SOC_REGS})
@@ -247,7 +235,7 @@ class TestWriteMany:
         transport = WriteableFakeTransport(
             readback_values={reg: 20 for reg in DISCHARGE_SOC_REGS},
         )
-        coordinator = self._coordinator(transport, dry_run=False, monkeypatch=monkeypatch)
+        coordinator = self._coordinator(transport, read_only=False, monkeypatch=monkeypatch)
 
         await coordinator.async_write_many({reg: 20 for reg in DISCHARGE_SOC_REGS})
 
@@ -317,7 +305,7 @@ class TestReassert:
             hass=None,
             address="AA:BB:CC:DD:EE:FF",
             transport_factory=lambda _dev: transport,
-            dry_run=False,
+            read_only=False,
             reassert=False,
         )
         coordinator._resolve_device = lambda: None
@@ -340,7 +328,7 @@ class TestReassert:
             hass=None,
             address="AA:BB:CC:DD:EE:FF",
             transport_factory=lambda _dev: transport,
-            dry_run=False,
+            read_only=False,
             reassert=True,
         )
         coordinator._resolve_device = lambda: None
@@ -365,7 +353,7 @@ class TestReassert:
             hass=None,
             address="AA:BB:CC:DD:EE:FF",
             transport_factory=lambda _dev: transport,
-            dry_run=False,
+            read_only=False,
             reassert=True,
         )
         coordinator._resolve_device = lambda: None
@@ -388,7 +376,7 @@ class TestBLEBusy:
             hass=None,
             address="AA:BB:CC:DD:EE:FF",
             transport_factory=lambda _dev: WriteableFakeTransport(),
-            dry_run=False,
+            read_only=False,
         )
         _stub_ble_device(monkeypatch, present=False)
 
@@ -511,7 +499,7 @@ class TestWriteRetry:
             hass=None,
             address="AA:BB:CC:DD:EE:FF",
             transport_factory=lambda _dev: transport,
-            dry_run=False,
+            read_only=False,
             write_attempts=attempts,
         )
         coordinator._resolve_device = lambda: None
@@ -655,14 +643,14 @@ class TestKeepalive:
     """Opt-in persistent connection: reuse one BLE link across polls/writes,
     drop it on error, and release it the instant keepalive is turned off."""
 
-    def _coordinator(self, factory, *, keepalive):
+    def _coordinator(self, factory, *, connection_mode):
         from custom_components.deye_ble.coordinator import DeyeBleCoordinator
 
         coordinator = DeyeBleCoordinator(
             hass=None,
             address="AA:BB:CC:DD:EE:FF",
             transport_factory=factory,
-            keepalive=keepalive,
+            connection_mode=connection_mode,
         )
         coordinator._resolve_device = lambda: object()
         return coordinator
@@ -670,7 +658,7 @@ class TestKeepalive:
     @pytest.mark.asyncio
     async def test_keepalive_reuses_one_connection_across_polls(self):
         factory, created = _counting_factory()
-        coordinator = self._coordinator(factory, keepalive=True)
+        coordinator = self._coordinator(factory, connection_mode="live_local")
 
         await coordinator._async_update_data()
         await coordinator._async_update_data()
@@ -686,7 +674,7 @@ class TestKeepalive:
         factory, created = _counting_factory(
             behaviors=[{"fail_on_block": 0x024A}, {}]
         )
-        coordinator = self._coordinator(factory, keepalive=True)
+        coordinator = self._coordinator(factory, connection_mode="live_local")
         coordinator.async_set_updated_data({"solar_power": 1})  # tolerate 1 failure
 
         await coordinator._async_update_data()  # fails -> drops T1
@@ -699,12 +687,12 @@ class TestKeepalive:
     @pytest.mark.asyncio
     async def test_turning_keepalive_off_disconnects_held_link(self):
         factory, created = _counting_factory()
-        coordinator = self._coordinator(factory, keepalive=True)
+        coordinator = self._coordinator(factory, connection_mode="live_local")
 
         await coordinator._async_update_data()  # establishes the held link
         assert created[0].connects == 1
 
-        await coordinator.async_set_keepalive(False)
+        await coordinator.async_apply_options({"connection_mode": "standard"})
 
         assert created[0].disconnects == 1
         assert coordinator._persistent is None
@@ -713,7 +701,7 @@ class TestKeepalive:
     async def test_keepalive_off_reconnects_each_poll(self):
         # Default behaviour must be unchanged: a fresh session per poll.
         factory, created = _counting_factory()
-        coordinator = self._coordinator(factory, keepalive=False)
+        coordinator = self._coordinator(factory, connection_mode="standard")
 
         await coordinator._async_update_data()
         await coordinator._async_update_data()
