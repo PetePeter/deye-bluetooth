@@ -1,4 +1,4 @@
-﻿"""Number entities — write-through controls for inverter settings."""
+"""Number entities — write-through controls for inverter settings."""
 from __future__ import annotations
 
 import logging

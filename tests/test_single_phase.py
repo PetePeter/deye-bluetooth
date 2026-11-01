@@ -1,4 +1,4 @@
-﻿"""Single-phase profile, decoded from a live SUN-8K-SG05LP1-EU-SM2 capture.
+"""Single-phase profile, decoded from a live SUN-8K-SG05LP1-EU-SM2 capture.
 
 TELEMETRY/CONFIG are raw register words read over BLE through a DL1000B logger
 (serial number replaced). Expected values are the same-minute Deye Cloud readings
@@ -267,4 +267,3 @@ SUN6K_FRAMES = {
 def test_sun6k_capture_decodes(key, expected):
     words = {start: p.parse_read(frame) for start, frame in SUN6K_FRAMES.items()}
     assert r.decode_single_phase(words)[key] == expected
-

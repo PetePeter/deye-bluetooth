@@ -1,4 +1,4 @@
-﻿# Deye Bluetooth (Local) — Home Assistant Integration
+# Deye Bluetooth (Local) — Home Assistant Integration
 
 Local control of a Deye hybrid inverter over **Bluetooth Low Energy**, with **no
 cloud dependency**. This integration reads all telemetry and writes all controls
@@ -344,4 +344,3 @@ framing specification (AT commands, Modbus wrapping, CRC, register map).
 
 Protocol reverse-engineered from a cloud TLS/MQTT MITM capture and an Android
 BLE HCI snoop. Built with Claude Code.
-

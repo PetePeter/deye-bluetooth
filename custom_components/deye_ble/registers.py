@@ -1,4 +1,4 @@
-﻿"""P2 — Register map, telemetry decoders, and control encoders.
+"""P2 — Register map, telemetry decoders, and control encoders.
 
 Maps the Deye logger's Modbus holding registers to the Home Assistant entity
 keys used by ha-deyecloud-bridge, so the BLE integration is a drop-in.
