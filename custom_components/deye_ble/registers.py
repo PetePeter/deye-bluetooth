@@ -178,14 +178,6 @@ _DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
     "daily_grid_import":       (0x0208, 0.1,  False, 0),
     "daily_grid_export":       (0x0209, 0.1,  False, 0),
 
-    # Energy — lifetime totals (kWh)
-    "total_solar":             (0x0216, 0.1,  False, 0),
-    "total_grid_import":       (0x020A, 0.1,  False, 0),
-    "total_grid_export":       (0x020C, 0.1,  False, 0),
-    "total_battery_charge":    (0x0204, 0.1,  False, 0),
-    "total_battery_discharge": (0x0206, 0.1,  False, 0),
-    "total_consumption":       (0x020F, 0.1,  False, 0),  # lifetime; daily_consumption derived in P4
-
     # Control mirrors (decoded from CONTROL_BLOCKS)
     "zero_export_power":       (0x0068, 1,    True,  0),     # W (grid-comp offset; negative = force import)
     "max_charge_current":      (0x006C, 1,    False, 0),     # A (battery charge current limit)
@@ -200,6 +192,17 @@ _DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
     "grid_peak_power":         (0x00BF, 1,    False, 0),     # W (grid peak-shaving cap)
     # work_mode (enum), charge_start/charge_end (HHMM), and the 0x00B2 peak-shaving
     # enable bits are handled specially below.
+}
+
+# Energy — lifetime totals (kWh): 32-bit, low word first. Decoding only the
+# low word wraps at 6553.5 kWh (high words read 0 on 2026-11-01).
+_DECODE32: dict[str, tuple] = {
+    "total_solar":             (0x0216, 0x0217, 0.1),
+    "total_grid_import":       (0x020A, 0x020B, 0.1),
+    "total_grid_export":       (0x020C, 0x020D, 0.1),
+    "total_battery_charge":    (0x0204, 0x0205, 0.1),
+    "total_battery_discharge": (0x0206, 0x0207, 0.1),
+    "total_consumption":       (0x020F, 0x0210, 0.1),  # daily_consumption derived in P4
 }
 
 
@@ -228,14 +231,8 @@ def decode(words_by_reg: dict[int, list[int]]) -> dict[str, float | int | str | 
     poll yields a partial dict rather than wrong values.
     """
     result: dict[str, float | int | str | datetime] = {}
-
-    for key, (reg, scale, signed, offset) in _DECODE_MAP.items():
-        raw = _lookup(words_by_reg, reg)
-        if raw is None:
-            continue
-        value = _signed16(raw) if signed else raw
-        value = (value - offset) * scale
-        result[key] = int(value) if (scale == 1 and offset == 0) else round(value, 2)
+    _decode_scalar(words_by_reg, _DECODE_MAP, result)
+    _decode_32(words_by_reg, _DECODE32, result)
 
     work_mode_raw = _lookup(words_by_reg, REG_WORK_MODE)
     if work_mode_raw is not None:
@@ -371,7 +368,6 @@ _SP_DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
     "house_load":              (178, 1,    True,  0),
     "ups_power":               (176, 1,    True,  0),
     "load_voltage":            (157, 0.1,  False, 0),
-    "load_current":            (179, 0.01, True,  0),
     "load_frequency":          (192, 0.01, False, 0),
     # Generator port
     "gen_power":               (166, 1,    True,  0),
@@ -385,11 +381,10 @@ _SP_DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
     "daily_battery_discharge": (71,  0.1,  False, 0),
     "daily_load":              (84,  0.1,  False, 0),
     "daily_gen":               (62,  0.1,  False, 0),
-    "daily_inverter_energy":   (60,  0.1,  False, 0),
-    # Energy — month (kWh)
-    "month_solar":             (65,  0.1,  False, 0),
-    "month_load":              (66,  0.1,  False, 0),
-    "month_grid_import":       (67,  0.1,  False, 0),
+    # Signed: load minus grid import, so it falls while the grid charges the
+    # battery. The month (65-68) and year (87-88) words undercount and glitch
+    # at rollover, so they are not decoded (PR #8 review, SUN-8K-SG05LP1).
+    "daily_inverter_energy":   (60,  0.1,  True,  0),
     # BMS (as the inverter sees it over CAN)
     "bms_charge_voltage":          (312, 0.01, False, 0),
     "bms_discharge_voltage":       (313, 0.01, False, 0),
@@ -438,15 +433,14 @@ _SP_CONFIG_MAP: dict[str, tuple[int, float, bool, int]] = {
 
 # 32-bit counters, low word first: (low register, high register, scale).
 # Grid import skips 79 (that is grid frequency), so its high word is 80.
-_SP_DECODE32: dict[str, tuple[int, int, float]] = {
+_SP_DECODE32: dict[str, tuple] = {
     "total_solar":             (96, 97, 0.1),
     "total_grid_import":       (78, 80, 0.1),
     "total_grid_export":       (81, 82, 0.1),
     "total_battery_charge":    (72, 73, 0.1),
     "total_battery_discharge": (74, 75, 0.1),
     "total_consumption":       (85, 86, 0.1),
-    "year_solar":              (68, 69, 0.1),
-    "year_load":               (87, 88, 0.1),
+    "total_inverter_energy":   (63, 64, 0.1, True),  # signed, like 60
 }
 _SP_CONFIG32: dict[str, tuple[int, int, float]] = {
     "rated_power":             (16, 17, 0.1),
@@ -493,11 +487,14 @@ def _decode_scalar(words_by_reg, table, result) -> None:
 
 
 def _decode_32(words_by_reg, table, result) -> None:
-    for key, (lo_reg, hi_reg, scale) in table.items():
+    for key, (lo_reg, hi_reg, scale, *signed) in table.items():
         lo, hi = _lookup(words_by_reg, lo_reg), _lookup(words_by_reg, hi_reg)
         if lo is None or hi is None:
             continue
-        result[key] = round(((hi << 16) | lo) * scale, 2)
+        raw = (hi << 16) | lo
+        if signed and raw & 0x8000_0000:
+            raw -= 1 << 32
+        result[key] = round(raw * scale, 2)
 
 
 def _words(words_by_reg, start: int, count: int) -> list[int] | None:

@@ -125,14 +125,33 @@ def test_blocks_fit_ble_reads_and_do_not_overlap(blocks):
     ("inverter_problem", False),
     ("bms_problem", False),
     ("grid_connected", True),
-    # month / year counters (kellerza single_phase.py)
-    ("month_solar", 94.0),
-    ("month_load", 294.7),
-    ("year_solar", 94.0),
+    # inverter energy: daily 60, lifetime 63-64
+    ("daily_inverter_energy", 3.0),
+    ("total_inverter_energy", 2.7),
     ("inverter_clock", datetime(2026, 10, 31, 8, 11, 42)),
 ])
 def test_decode(key, expected):
     assert _decode()[key] == expected
+
+
+def test_inverter_energy_is_signed():
+    # Reg 60 is load minus grid import, negative after grid-charging (PR #8).
+    telemetry = dict(TELEMETRY)
+    block = list(telemetry[59])
+    block[60 - 59] = 0x10000 - 25                          # -2.5 kWh
+    block[63 - 59], block[64 - 59] = 0x10000 - 120, 0xFFFF  # -12.0 kWh
+    telemetry[59] = block
+    data = r.decode_single_phase(telemetry)
+    assert data["daily_inverter_energy"] == -2.5
+    assert data["total_inverter_energy"] == -12.0
+
+
+def test_unreliable_counters_are_not_decoded():
+    # 179 is load power (W) not current; month/year words undercount (PR #8).
+    data = _decode()
+    for key in ("load_current", "month_solar", "month_load",
+                "month_grid_import", "year_solar", "year_load"):
+        assert key not in data
 
 
 def test_solar_power_is_pv1_plus_pv2():

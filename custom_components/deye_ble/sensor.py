@@ -64,7 +64,7 @@ SENSORS: list[tuple] = [
 
 # Single-phase profile (registers.decode_single_phase). Telemetry: the shared
 # rows minus the three-phase L1-L3 ones, plus PV2, CT, load, generator port,
-# month/year counters, the BMS block and the inverter state/alarm/fault words.
+# the BMS block and the inverter state/alarm/fault words.
 SINGLE_PHASE_SENSORS: list[tuple] = [
     row for row in SENSORS
     if row[0] not in {
@@ -83,7 +83,6 @@ SINGLE_PHASE_SENSORS: list[tuple] = [
     ("external_ct_current", "External CT Current", "A", SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None, 2),
     ("external_ct_power", "External CT Power", "W", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, None, 0),
     ("load_voltage", "Load Voltage", "V", SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, None, 1),
-    ("load_current", "Load Current", "A", SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None, 2),
     ("load_frequency", "Load Frequency", "Hz", SensorDeviceClass.FREQUENCY, SensorStateClass.MEASUREMENT, None, 2),
     ("inverter_output_power", "Inverter Output", "W", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, "mdi:lightning-bolt", 0),
     ("inverter_output_voltage", "Inverter Output Voltage", "V", SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, None, 1),
@@ -97,12 +96,8 @@ SINGLE_PHASE_SENSORS: list[tuple] = [
     ("daily_battery_charge", "Battery Charge Today", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, None, 2),
     ("daily_battery_discharge", "Battery Discharge Today", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, None, 2),
     ("daily_gen", "Generator Today", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, "mdi:engine", 2),
-    ("daily_inverter_energy", "Inverter Energy Today", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, None, 2),
-    ("month_solar", "Solar This Month", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, "mdi:solar-power", 1),
-    ("month_load", "Consumption This Month", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, "mdi:home-lightning-bolt", 1),
-    ("month_grid_import", "Grid Import This Month", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-import", 1),
-    ("year_solar", "Solar This Year", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, "mdi:solar-power", 1),
-    ("year_load", "Consumption This Year", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, "mdi:home-lightning-bolt", 1),
+    ("daily_inverter_energy", "Inverter Energy Today", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL, None, 2),
+    ("total_inverter_energy", "Inverter Energy Total", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL, None, 2),
     ("total_consumption", "Consumption Total", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, "mdi:home-lightning-bolt", 2),
     ("bms_soc", "BMS SOC", "%", SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT, None, 0),
     ("bms_voltage", "BMS Voltage", "V", SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, None, 2),
