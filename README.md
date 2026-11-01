@@ -101,7 +101,9 @@ drives all entity unique IDs.
 On first setup the integration reads register 0 (device type) once and stores
 the result in the config entry: `0x0003` selects the **single-phase** map
 (SUN-xK-SG0xLP1), anything else the **three-phase** map. Polls and writes never
-re-detect; re-adding the device does. Each profile has its own register map and
+re-detect; re-adding the device does, and so does picking
+**Auto-detect** under Options → Inverter type. That option can also pin the
+map by hand if detection got it wrong. Each profile has its own register map and
 its own control table, so a control exists only where its register is known.
 
 ### Options
@@ -118,6 +120,7 @@ After setup, **Settings → Devices & Services → Deye Bluetooth (Local) → Op
 | **Slow poll interval** | 300 s | Slow tier (settings, clock, BMS limits, lifetime info), 300–3600 s. |
 | **Cloud quiet window every / length** | 300 s / 30 s | Live + Deye Cloud only. |
 | **Reassert** | OFF | If a cloud/app write changes a register that HA last set, re-apply the HA value on the next poll cycle. |
+| **Inverter type** | detected | Auto-detect / Three-phase / Single-phase. Pins the register map; saving a change reloads the integration. |
 
 Installs from before 0.2 are migrated: `dry_run` becomes `read_only`, keepalive
 off becomes Standard, keepalive on becomes Live local only at the old interval.

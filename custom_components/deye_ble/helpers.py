@@ -14,6 +14,7 @@ from . import registers as r
 from .const import (
     CONF_CONNECTION_MODE,
     CONF_LIVE_INTERVAL,
+    CONF_PROFILE,
     CONF_READ_ONLY,
     CONF_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
@@ -23,6 +24,7 @@ from .const import (
     MIN_LIVE_INTERVAL,
     MODE_LIVE_LOCAL,
     MODE_STANDARD,
+    PROFILE_AUTO,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,6 +83,23 @@ async def async_poll(transport: Transport, **kwargs) -> dict[str, Any]:
     """:func:`async_read_tiers` without the slow-completion flag."""
     data, _slow_complete = await async_read_tiers(transport, **kwargs)
     return data
+
+
+def apply_profile_choice(data: Mapping[str, Any], choice: str) -> dict[str, Any] | None:
+    """New entry.data for a profile picked in Options, or None if unchanged.
+
+    A pinned profile overrides auto-detection (a safety net if the device type
+    misreads at setup). PROFILE_AUTO drops the cached profile so the next setup
+    re-detects. Any change needs a reload: the entity set differs per profile.
+    """
+    if choice == data.get(CONF_PROFILE, PROFILE_AUTO):
+        return None
+    new = dict(data)
+    if choice == PROFILE_AUTO:
+        new.pop(CONF_PROFILE, None)
+    else:
+        new[CONF_PROFILE] = choice
+    return new
 
 
 def migrate_options(options: Mapping[str, Any]) -> dict[str, Any] | None:

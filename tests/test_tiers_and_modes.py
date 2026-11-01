@@ -15,14 +15,16 @@ from custom_components.deye_ble import registers as r
 from custom_components.deye_ble.const import (
     CONF_CONNECTION_MODE,
     CONF_LIVE_INTERVAL,
+    CONF_PROFILE,
     CONF_READ_ONLY,
     CONF_SCAN_INTERVAL,
     MODE_LIVE_CLOUD,
     MODE_LIVE_LOCAL,
     MODE_STANDARD,
+    PROFILE_AUTO,
 )
 from custom_components.deye_ble import protocol as p
-from custom_components.deye_ble.helpers import migrate_options
+from custom_components.deye_ble.helpers import apply_profile_choice, migrate_options
 from tests.test_registers import FRAMES
 from tests.test_safety_coordinator import _counting_factory, _stub_ble_device
 from tests.test_single_phase import CONFIG, DEVICE_TYPE, TELEMETRY
@@ -229,6 +231,28 @@ def test_migration_maps_keepalive_to_live_local_at_the_old_interval():
 
 def test_migration_is_a_no_op_once_done():
     assert migrate_options({CONF_READ_ONLY: True}) is None
+
+
+# --- Profile override (Options) -----------------------------------------------
+
+def test_profile_choice_pins_a_profile_over_the_detected_one():
+    data = {"address": "AA", CONF_PROFILE: r.PROFILE_THREE_PHASE}
+    assert apply_profile_choice(data, r.PROFILE_SINGLE_PHASE) == {
+        "address": "AA", CONF_PROFILE: r.PROFILE_SINGLE_PHASE,
+    }
+
+
+def test_profile_choice_auto_drops_the_cache_so_setup_redetects():
+    data = {"address": "AA", CONF_PROFILE: r.PROFILE_SINGLE_PHASE}
+    assert apply_profile_choice(data, PROFILE_AUTO) == {"address": "AA"}
+
+
+@pytest.mark.parametrize("data, choice", [
+    ({CONF_PROFILE: r.PROFILE_THREE_PHASE}, r.PROFILE_THREE_PHASE),
+    ({}, PROFILE_AUTO),
+])
+def test_profile_choice_unchanged_needs_no_reload(data, choice):
+    assert apply_profile_choice(data, choice) is None
 
 
 # --- Profile detection + single-phase writes -------------------------------------

@@ -33,9 +33,11 @@
           "slow_interval": "Slow tier interval (seconds): settings, clock, BMS limits",
           "cloud_sync_interval": "Live + Deye Cloud: quiet window every (seconds)",
           "cloud_window": "Live + Deye Cloud: quiet window length (seconds)",
-          "reassert": "Reassert local values on drift"
+          "reassert": "Reassert local values on drift",
+          "profile": "Inverter type (register map)"
         },
         "data_description": {
+          "profile": "Detected once at setup. Pin it here if detection picked the wrong map; Auto-detect re-reads the inverter type. Saving a change reloads the integration.",
           "read_only": "On by default. While on, every setting change and clock sync is refused with an error and the entity keeps the inverter's value.",
           "connection_mode": "Standard reconnects every poll and leaves the logger's radio free for Deye Cloud. Live holds one link and polls fast: 'with Deye Cloud' releases it for a quiet window so the cloud upload keeps working; 'local only' never does, and Deye Cloud stops updating. A held link also occupies an ESP proxy slot and blocks the phone app."
         }

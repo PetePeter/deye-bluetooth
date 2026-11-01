@@ -6,6 +6,7 @@ DOMAIN = "deye_ble"
 CONF_LOGGER_SN = "logger_sn"
 CONF_ADDRESS = "address"
 CONF_PROFILE = "profile"   # entry.data: register map, detected once at setup
+PROFILE_AUTO = "auto"      # Options choice: drop the cached profile and re-detect
 CONF_READ_ONLY = "read_only"
 CONF_REASSERT = "reassert"
 CONF_SCAN_INTERVAL = "scan_interval"

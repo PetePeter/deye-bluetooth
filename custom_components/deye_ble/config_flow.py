@@ -29,6 +29,7 @@ from .const import (
     CONF_CONNECTION_MODE,
     CONF_LIVE_INTERVAL,
     CONF_LOGGER_SN,
+    CONF_PROFILE,
     CONF_READ_ONLY,
     CONF_REASSERT,
     CONF_SCAN_INTERVAL,
@@ -42,6 +43,7 @@ from .const import (
     DEFAULT_REASSERT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SLOW_INTERVAL,
+    PROFILE_AUTO,
     DOMAIN,
     MAX_CLOUD_SYNC_INTERVAL,
     MAX_CLOUD_WINDOW,
@@ -54,7 +56,8 @@ from .const import (
     MIN_SCAN_INTERVAL,
     MIN_SLOW_INTERVAL,
 )
-from .helpers import validate_logger_sn
+from . import registers as r
+from .helpers import apply_profile_choice, validate_logger_sn
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -194,17 +197,23 @@ def _int_range(lo: int, hi: int):
 
 
 class DeyeBleOptionsFlowHandler(config_entries.OptionsFlow):
-    """Options: read-only lock, connection mode, poll tiers, reassert.
+    """Options: read-only lock, connection mode, poll tiers, reassert, profile.
 
     The same options back the CONFIG entities (switch/select/number), so the
     form and the dashboard always agree.
     """
 
     async def async_step_init(self, user_input: dict | None = None) -> ConfigFlowResult:
+        entry = self.config_entry
         if user_input is not None:
-            return self.async_create_entry(data={**self.config_entry.options, **user_input})
+            # The profile lives in entry.data (it picks the register map), not options.
+            choice = user_input.pop(CONF_PROFILE)
+            if (new_data := apply_profile_choice(entry.data, choice)) is not None:
+                self.hass.config_entries.async_update_entry(entry, data=new_data)
+                self.hass.config_entries.async_schedule_reload(entry.entry_id)
+            return self.async_create_entry(data={**entry.options, **user_input})
 
-        current = self.config_entry.options
+        current = entry.options
 
         def opt(key, default):
             return vol.Required(key, default=current.get(key, default))
@@ -225,5 +234,12 @@ class DeyeBleOptionsFlowHandler(config_entries.OptionsFlow):
             ),
             opt(CONF_CLOUD_WINDOW, DEFAULT_CLOUD_WINDOW): _int_range(MIN_CLOUD_WINDOW, MAX_CLOUD_WINDOW),
             opt(CONF_REASSERT, DEFAULT_REASSERT): bool,
+            vol.Required(
+                CONF_PROFILE, default=entry.data.get(CONF_PROFILE, PROFILE_AUTO)
+            ): SelectSelector(SelectSelectorConfig(options=[
+                SelectOptionDict(value=PROFILE_AUTO, label="Auto-detect"),
+                SelectOptionDict(value=r.PROFILE_THREE_PHASE, label="Three-phase"),
+                SelectOptionDict(value=r.PROFILE_SINGLE_PHASE, label="Single-phase"),
+            ])),
         })
         return self.async_show_form(step_id="init", data_schema=schema)
