@@ -1,4 +1,4 @@
-"""P2 — Register map, telemetry decoders, and control encoders.
+﻿"""P2 — Register map, telemetry decoders, and control encoders.
 
 Maps the Deye logger's Modbus holding registers to the Home Assistant entity
 keys used by ha-deyecloud-bridge, so the BLE integration is a drop-in.
@@ -423,6 +423,9 @@ _SP_CONFIG_MAP: dict[str, tuple[int, float, bool, int]] = {
     "gen_charge_current":      (227, 1,    False, 0),
     "grid_charge_start_soc":   (229, 1,    False, 0),
     "grid_charge_current":     (230, 1,    False, 0),
+    "smartload_off_soc":       (237, 1,    False, 0),
+    "smartload_on_soc":        (239, 1,    False, 0),
+    "smartload_min_solar_power": (241, 1,  False, 0),
     "max_sell_power":          (245, 1,    False, 0),
     "grid_reconnect_time":     (282, 1,    False, 0),     # s
     "grid_voltage_high_limit": (287, 0.1,  False, 0),
@@ -703,6 +706,9 @@ PROFILES: dict[str, RegisterProfile] = {
             "grid_charge_current": 230,
             "grid_charge_enabled": 232,
             "io_mode": 235,
+            "smartload_off_soc": 237,
+            "smartload_on_soc": 239,
+            "smartload_min_solar_power": 241,
             "energy_pattern": 243,
             "work_mode": 244,
             "max_sell_power": 245,

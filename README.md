@@ -1,4 +1,4 @@
-# Deye Bluetooth (Local) — Home Assistant Integration
+﻿# Deye Bluetooth (Local) — Home Assistant Integration
 
 Local control of a Deye hybrid inverter over **Bluetooth Low Energy**, with **no
 cloud dependency**. This integration reads all telemetry and writes all controls
@@ -247,6 +247,7 @@ use that map's registers (write/read-back verified on a SUN-8K-SG01LP1):
 | `number` | Zero Export Power / Max Charge Current / Max Discharge Current | 206 / 210 / 211 |
 | `number` | Battery Shutdown / Restart / Low SOC | 217 / 218 / 219 |
 | `number` | Grid Charge Current | 230 |
+| `number` | SmartLoad OFF SOC / ON SOC / Min Solar Power | 237 / 239 / 241 |
 | `number` | Max Sell Power | 245 |
 | `number` | Gen / Grid Peak Shave Power | 292 / 293 |
 | `select` | Energy Pattern / Work Mode / GEN Port Mode | 243 / 244 / 235 |
@@ -343,3 +344,4 @@ framing specification (AT commands, Modbus wrapping, CRC, register map).
 
 Protocol reverse-engineered from a cloud TLS/MQTT MITM capture and an Android
 BLE HCI snoop. Built with Claude Code.
+

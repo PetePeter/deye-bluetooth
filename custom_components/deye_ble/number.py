@@ -1,4 +1,4 @@
-"""Number entities — write-through controls for inverter settings."""
+﻿"""Number entities — write-through controls for inverter settings."""
 from __future__ import annotations
 
 import logging
@@ -280,11 +280,51 @@ class DeyeGridChargeCurrent(_SingleRegisterNumber):
     _attr_mode = NumberMode.BOX
     _attr_device_class = NumberDeviceClass.CURRENT
 
+class DeyeSmartloadOffSoc(_SingleRegisterNumber):
+    """SmartLoad OFF battery SOC (%) - inverter cuts SmartLoad below this. Reg 237 (0x00ED)."""
+
+    _data_key = "smartload_off_soc"
+    _attr_name = "SmartLoad OFF Battery SOC"
+    _attr_icon = "mdi:battery-arrow-down"
+    _attr_native_unit_of_measurement = "%"
+    _attr_native_min_value = 0
+    _attr_native_max_value = 100
+    _attr_native_step = 1
+    _attr_mode = NumberMode.BOX
+
+
+class DeyeSmartloadOnSoc(_SingleRegisterNumber):
+    """SmartLoad ON battery SOC (%) - inverter turns on SmartLoad above this. Reg 239 (0x00EF)."""
+
+    _data_key = "smartload_on_soc"
+    _attr_name = "SmartLoad ON Battery SOC"
+    _attr_icon = "mdi:battery-arrow-up"
+    _attr_native_unit_of_measurement = "%"
+    _attr_native_min_value = 0
+    _attr_native_max_value = 100
+    _attr_native_step = 1
+    _attr_mode = NumberMode.BOX
+
+
+class DeyeSmartloadMinSolarPower(_SingleRegisterNumber):
+    """SmartLoad minimum solar power (W). Reg 241 (0x00F1)."""
+
+    _data_key = "smartload_min_solar_power"
+    _attr_name = "SmartLoad Min Solar Power"
+    _attr_icon = "mdi:solar-power"
+    _attr_native_unit_of_measurement = "W"
+    _attr_native_min_value = 0
+    _attr_native_max_value = 20000
+    _attr_native_step = 50
+    _attr_mode = NumberMode.BOX
+    _attr_device_class = NumberDeviceClass.POWER
+
 
 REGISTER_NUMBERS: list[type[_SingleRegisterNumber]] = [
     DeyeMaxSellPower, DeyeZeroExportPower, DeyeChargeSoc, DeyeMaxChargeCurrent,
     DeyeMaxDischargeCurrent, DeyeBattShutdownSoc, DeyeBattLowSoc, DeyeBattRestartSoc,
     DeyeGridPeakPower, DeyeGenPeakPower, DeyeGridChargeCurrent,
+    DeyeSmartloadOffSoc, DeyeSmartloadOnSoc, DeyeSmartloadMinSolarPower,
 ]
 
 
