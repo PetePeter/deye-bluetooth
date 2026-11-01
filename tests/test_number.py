@@ -1,4 +1,4 @@
-"""Number-entity tests — Discharge SOC writes the floor to all non-charge slots.
+﻿"""Number-entity tests — Discharge SOC writes the floor to all non-charge slots.
 
 Requires homeassistant (number.py imports it). The coordinator is faked so the
 test exercises the real entity setter logic without bleak or a live HA loop.
@@ -22,6 +22,9 @@ from custom_components.deye_ble.number import (
     DeyeMaxChargeCurrent,
     DeyeMaxDischargeCurrent,
     DeyeMaxSellPower,
+    DeyeSmartloadMinSolarPower,
+    DeyeSmartloadOffSoc,
+    DeyeSmartloadOnSoc,
     DeyeZeroExportPower,
 )
 from custom_components.deye_ble.registers import (
@@ -142,6 +145,9 @@ def test_zero_export_power_allows_negative_range():
     (DeyeMaxChargeCurrent, 210),
     (DeyeGridChargeCurrent, 230),
     (DeyeGridPeakPower, 293),
+    (DeyeSmartloadOffSoc, 237),
+    (DeyeSmartloadOnSoc, 239),
+    (DeyeSmartloadMinSolarPower, 241),
 ])
 async def test_single_phase_number_writes_the_single_phase_register(cls, reg):
     # Same entity, other map: a single-phase write must never land on the
@@ -155,3 +161,4 @@ async def test_single_phase_number_writes_the_single_phase_register(cls, reg):
 def test_single_phase_zero_export_floor_is_zero():
     entity = DeyeZeroExportPower(FakeCoordinator(r.PROFILE_SINGLE_PHASE), FakeEntry("SN"), "SN")
     assert entity.native_min_value == 0
+

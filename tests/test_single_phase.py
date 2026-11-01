@@ -1,4 +1,4 @@
-"""Single-phase profile, decoded from a live SUN-8K-SG05LP1-EU-SM2 capture.
+﻿"""Single-phase profile, decoded from a live SUN-8K-SG05LP1-EU-SM2 capture.
 
 TELEMETRY/CONFIG are raw register words read over BLE through a DL1000B logger
 (serial number replaced). Expected values are the same-minute Deye Cloud readings
@@ -93,6 +93,9 @@ def test_blocks_fit_ble_reads_and_do_not_overlap(blocks):
     ("max_sell_power", 500),
     ("max_charge_current", 160),
     ("max_discharge_current", 170),
+    ("smartload_off_soc", 95),
+    ("smartload_on_soc", 100),
+    ("smartload_min_solar_power", 0),
     ("rated_power", 800.0 * 10),
     # inverter identity and settings
     ("inverter_serial", "1234567890"),
@@ -264,3 +267,4 @@ SUN6K_FRAMES = {
 def test_sun6k_capture_decodes(key, expected):
     words = {start: p.parse_read(frame) for start, frame in SUN6K_FRAMES.items()}
     assert r.decode_single_phase(words)[key] == expected
+
