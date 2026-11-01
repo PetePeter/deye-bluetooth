@@ -117,10 +117,6 @@ def test_blocks_fit_ble_reads_and_do_not_overlap(blocks):
     ("inverter_problem", False),
     ("bms_problem", False),
     ("grid_connected", True),
-    # month / year counters (kellerza single_phase.py)
-    ("month_solar", 94.0),
-    ("month_load", 294.7),
-    ("year_solar", 94.0),
     ("inverter_clock", datetime(2026, 10, 31, 8, 11, 42)),
 ])
 def test_decode(key, expected):

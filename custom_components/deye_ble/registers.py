@@ -286,6 +286,9 @@ def decode(words_by_reg: dict[int, list[int]]) -> dict[str, float | int | str | 
 # 391.4 / 195.0 / 155.3 kWh, BMS 55.20 V / 160 A / 170 A). Addresses and lookups
 # follow ha-solarman deye_hybrid.yaml and kellerza/sunsynk single_phase.py.
 #
+# Left out on purpose: registers 60 and 65-69, 87-88 (day/month/year counters in
+# other maps). Here they go negative, jump to 1 300 000 or drop every evening.
+#
 # Monitoring only: the control registers differ too (0x006C, the three-phase
 # max charge current, is daily PV here), so this profile never writes. Settings
 # are read on the slow config cycle and published as read-only values.
@@ -304,8 +307,8 @@ def profile_from_device_type(raw: int) -> str:
 
 # Telemetry, every poll. Reads above 16 registers get no BLE reply.
 SP_READ_BLOCKS: list[tuple[int, int]] = [
-    (59, 16),   # 59 state, 60/62 today energy/gen, 65-69 month/year, 70-74 battery energy
-    (75, 16),   # 75-86 grid/load energy + grid frequency (79), 87-88 year load, 90 DC temp
+    (59, 16),   # 59 state, 62 generator today, 70-74 battery energy
+    (75, 16),   # 75-86 grid/load energy + grid frequency (79), 90 DC temp
     (91, 7),    # 91 AC temp, 92-95 generator energy, 96-97 total PV
     (101, 12),  # 101-106 alarm/fault words, 108 daily PV, 109-112 PV1/PV2 V + I
     (150, 16),  # grid/inverter/load voltages, grid/CT/inverter currents
@@ -375,11 +378,6 @@ _SP_DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
     "daily_battery_discharge": (71,  0.1,  False, 0),
     "daily_load":              (84,  0.1,  False, 0),
     "daily_gen":               (62,  0.1,  False, 0),
-    "daily_inverter_energy":   (60,  0.1,  False, 0),
-    # Energy — month (kWh)
-    "month_solar":             (65,  0.1,  False, 0),
-    "month_load":              (66,  0.1,  False, 0),
-    "month_grid_import":       (67,  0.1,  False, 0),
     # BMS (as the inverter sees it over CAN)
     "bms_charge_voltage":          (312, 0.01, False, 0),
     "bms_discharge_voltage":       (313, 0.01, False, 0),
@@ -432,8 +430,6 @@ _SP_DECODE32: dict[str, tuple[int, int, float]] = {
     "total_battery_charge":    (72, 73, 0.1),
     "total_battery_discharge": (74, 75, 0.1),
     "total_consumption":       (85, 86, 0.1),
-    "year_solar":              (68, 69, 0.1),
-    "year_load":               (87, 88, 0.1),
 }
 _SP_CONFIG32: dict[str, tuple[int, int, float]] = {
     "rated_power":             (16, 17, 0.1),
