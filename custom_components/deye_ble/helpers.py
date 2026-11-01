@@ -133,23 +133,32 @@ def migrate_options(options: Mapping[str, Any]) -> dict[str, Any] | None:
 # near zero (the inverter's own output/load voltage stays up, but that is a
 # different register). 100 V cleanly separates "energised" from "collapsed".
 GRID_PRESENT_VOLTAGE = 100.0
+# Some outages leave the grid voltage registers up (2026-11-01 07:44 UTC: all
+# phases held ~229.6 V) while grid frequency and power read 0. Nominal is 50/60 Hz.
+GRID_PRESENT_FREQUENCY = 40.0
 
-_GRID_VOLTAGE_KEYS = ("grid_voltage_l1", "grid_voltage_l2", "grid_voltage_l3")
+# Three-phase L1-L3, single-phase "grid_voltage".
+_GRID_VOLTAGE_KEYS = ("grid_voltage_l1", "grid_voltage_l2", "grid_voltage_l3", "grid_voltage")
 
 
 def infer_grid_connected(data: dict[str, Any]) -> bool | None:
-    """Infer grid-connection state from the per-phase grid voltages.
+    """Infer grid-connection state; every reported signal must look healthy.
 
-    Returns ``True`` if any phase is energised above ``GRID_PRESENT_VOLTAGE``,
-    ``False`` if all reported phases are below it, and ``None`` if no grid
-    voltage was reported (unknown — never a false "disconnected").
+    ``False`` if the grid relay is open (single-phase register 194), grid
+    frequency is below ``GRID_PRESENT_FREQUENCY``, or no phase is energised
+    above ``GRID_PRESENT_VOLTAGE``. ``True`` if the voltage (or, without one,
+    the relay) says so. ``None`` if nothing was reported (unknown — never a
+    false "disconnected").
     """
-    if data.get("grid_connected") is not None:
-        # Single-phase profile reads the grid relay (register 194) directly.
-        return data["grid_connected"]
+    relay = data.get("grid_connected")
+    if relay is False:
+        return False
+    frequency = data.get("grid_frequency")
+    if frequency is not None and frequency < GRID_PRESENT_FREQUENCY:
+        return False
     voltages = [data[k] for k in _GRID_VOLTAGE_KEYS if data.get(k) is not None]
     if not voltages:
-        return None
+        return relay
     return max(voltages) > GRID_PRESENT_VOLTAGE
 
 

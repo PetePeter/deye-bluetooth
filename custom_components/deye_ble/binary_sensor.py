@@ -48,10 +48,10 @@ SINGLE_PHASE_FLAGS: list[tuple] = [
 
 
 class DeyeGridConnected(CoordinatorEntity, BinarySensorEntity):
-    """On-grid state, inferred from whether any grid phase is energised.
+    """On-grid state, inferred from grid frequency and the per-phase voltages.
 
-    There is no verified grid-relay status register over BLE, so this is
-    derived from the per-phase grid voltages (see helpers.infer_grid_connected).
+    There is no verified three-phase grid-relay register over BLE, so this is
+    derived (see helpers.infer_grid_connected).
     """
 
     _attr_has_entity_name = True

@@ -80,6 +80,30 @@ def test_grid_connected_true_if_a_single_phase_present():
     assert infer_grid_connected(data) is True
 
 
+def test_grid_disconnected_when_frequency_collapses_but_voltage_holds():
+    # Live 2026-11-01 07:44 UTC: grid lost, every phase held ~229.6 V while
+    # grid frequency and grid power read 0.
+    data = {"grid_voltage_l1": 229.6, "grid_voltage_l2": 229.7,
+            "grid_voltage_l3": 229.6, "grid_frequency": 0.0}
+    assert infer_grid_connected(data) is False
+
+
+def test_grid_connected_with_nominal_frequency():
+    data = {"grid_voltage_l1": 232.3, "grid_frequency": 50.0}
+    assert infer_grid_connected(data) is True
+
+
+@pytest.mark.parametrize("override", [
+    {"grid_connected": False},  # relay open
+    {"grid_frequency": 0.0},
+    {"grid_voltage": 0.0},
+])
+def test_single_phase_needs_relay_frequency_and_voltage(override):
+    healthy = {"grid_connected": True, "grid_frequency": 50.0, "grid_voltage": 241.1}
+    assert infer_grid_connected(healthy) is True
+    assert infer_grid_connected({**healthy, **override}) is False
+
+
 def test_grid_connected_none_when_no_voltage_keys():
     # No grid-voltage reading -> unknown, not a false "disconnected".
     assert infer_grid_connected({}) is None
