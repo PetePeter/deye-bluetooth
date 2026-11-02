@@ -28,6 +28,7 @@ from .const import (
     CONF_CLOUD_WINDOW,
     CONF_CONNECTION_MODE,
     CONF_LIVE_INTERVAL,
+    CONF_PROFILE,
     CONF_LOGGER_SN,
     CONF_READ_ONLY,
     CONF_REASSERT,
@@ -205,11 +206,20 @@ class DeyeBleOptionsFlowHandler(config_entries.OptionsFlow):
             return self.async_create_entry(data={**self.config_entry.options, **user_input})
 
         current = self.config_entry.options
+        current_profile = current.get(
+            CONF_PROFILE, self.config_entry.data.get(CONF_PROFILE, "three_phase")
+        )
 
         def opt(key, default):
             return vol.Required(key, default=current.get(key, default))
 
         schema = vol.Schema({
+            opt(CONF_PROFILE, current_profile): SelectSelector(
+                SelectSelectorConfig(options=[
+                    SelectOptionDict(value=prof, label=label)
+                    for prof, label in PROFILE_LABELS.items()
+                ])
+            ),
             opt(CONF_READ_ONLY, DEFAULT_READ_ONLY): bool,
             opt(CONF_CONNECTION_MODE, DEFAULT_CONNECTION_MODE): SelectSelector(
                 SelectSelectorConfig(options=[
