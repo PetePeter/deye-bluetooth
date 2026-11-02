@@ -39,15 +39,18 @@ async def async_setup_entry(hass, entry) -> bool:
 
     from . import registers as r
 
+    profile = entry.options.get(
+        CONF_PROFILE, entry.data.get(CONF_PROFILE, r.PROFILE_THREE_PHASE)
+    )
     coordinator = DeyeBleCoordinator(
         hass, address=address, transport_factory=_make_transport,
-        profile=entry.data.get(CONF_PROFILE, r.PROFILE_THREE_PHASE),
+        profile=profile,
     )
     await coordinator.async_apply_options(entry.options)
 
     # The register map is detected ONCE and cached in entry.data; re-adding the
     # device re-detects. Entries from before profiles existed detect here.
-    if CONF_PROFILE not in entry.data:
+    if CONF_PROFILE not in entry.data and CONF_PROFILE not in entry.options:
         try:
             profile = await coordinator.async_detect_profile()
         except Exception as exc:  # noqa: BLE001 — HA retries setup later
@@ -62,6 +65,15 @@ async def async_setup_entry(hass, entry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     async def _on_options_update(hass, entry):
+        new_profile = entry.options.get(CONF_PROFILE)
+        if new_profile and new_profile != coordinator._profile:
+            _LOGGER.info(
+                "Profile changed from %s to %s, reloading config entry",
+                coordinator._profile,
+                new_profile,
+            )
+            await hass.config_entries.async_reload(entry.entry_id)
+            return
         await coordinator.async_apply_options(entry.options)
         coordinator.async_update_listeners()  # option entities reflect the change
 
