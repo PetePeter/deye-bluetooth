@@ -26,6 +26,7 @@
       "init": {
         "title": "Deye BLE options",
         "data": {
+          "profile": "Inverter profile",
           "read_only": "Read only (block every inverter write)",
           "connection_mode": "Connection mode",
           "scan_interval": "Standard poll interval (seconds)",
@@ -36,6 +37,7 @@
           "reassert": "Reassert local values on drift"
         },
         "data_description": {
+          "profile": "Single-Phase (SUN-xK-SG04/05LP1 LV hybrid) or Three-Phase (SUN-xK-SG04LP3 HV hybrid). Selecting a profile overrides auto-detection and reloads the integration.",
           "read_only": "On by default. While on, every setting change and clock sync is refused with an error and the entity keeps the inverter's value.",
           "connection_mode": "Standard reconnects every poll and leaves the logger's radio free for Deye Cloud. Live holds one link and polls fast: 'with Deye Cloud' releases it for a quiet window so the cloud upload keeps working; 'local only' never does, and Deye Cloud stops updating. A held link also occupies an ESP proxy slot and blocks the phone app."
         }
