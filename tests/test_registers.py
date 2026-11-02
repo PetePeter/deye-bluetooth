@@ -55,6 +55,16 @@ def test_energy_totals_block_0x0202(poll):
     assert poll["daily_grid_export"] == 0.4
 
 
+def test_lifetime_totals_include_the_high_word():
+    # Live 2026-11-01: grid import read 5911.3 kWh, close to the 16-bit wrap
+    # at 6553.5. A high word of 1 must add 6553.6 kWh, not be dropped.
+    words = _words_by_reg()
+    block = list(words[0x0202])
+    block[0x020A - 0x0202], block[0x020B - 0x0202] = 5, 1
+    words[0x0202] = block
+    assert r.decode(words)["total_grid_import"] == 6554.1
+
+
 def test_solar_and_temps_block_0x0210(poll):
     assert poll["daily_solar"] == 8.1
     assert poll["total_solar"] == 320.9
@@ -154,7 +164,7 @@ def test_zero_export_power_decode_signed():
 def test_zero_export_power_block_is_polled():
     # 0x0068 must fall inside a CONTROL_BLOCKS read so native_value tracks the device.
     assert any(
-        start <= 0x0068 < start + count for start, count in r.CONTROL_BLOCKS
+        start <= 0x0068 < start + count for start, count in r.SLOW_BLOCKS
     )
 
 
@@ -174,7 +184,7 @@ def test_max_charge_current_block_is_polled():
     # the live value; 0x006C..0x006D must fall inside one polled block.
     assert any(
         start <= 0x006C and 0x006D < start + count
-        for start, count in r.CONTROL_BLOCKS
+        for start, count in r.SLOW_BLOCKS
     )
 
 
@@ -194,7 +204,7 @@ def test_battery_threshold_block_is_polled():
     # The three SOC thresholds must be inside one polled block.
     for reg in (0x0073, 0x0074, 0x0075):
         assert any(
-            start <= reg < start + count for start, count in r.CONTROL_BLOCKS
+            start <= reg < start + count for start, count in r.SLOW_BLOCKS
         ), f"0x{reg:04X} not polled"
 
 
@@ -301,7 +311,7 @@ def test_peak_shave_block_is_polled():
     # Flags + both power regs must fall inside one polled control block.
     for reg in (0x00B2, 0x00BE, 0x00BF):
         assert any(
-            start <= reg < start + count for start, count in r.CONTROL_BLOCKS
+            start <= reg < start + count for start, count in r.SLOW_BLOCKS
         ), f"0x{reg:04X} not polled"
 
 

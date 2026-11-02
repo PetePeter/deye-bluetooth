@@ -83,8 +83,8 @@ time (or within a few seconds for fast-changing power values).
 5. **Compare** each row in the table above. Mark pass/fail.
 6. **For fast-changing power values**, take multiple snapshots at different
    times of day (sunny morning, midday peak, evening idle) to build confidence.
-7. **For controls**, test with dry-run ON first (confirm no GATT writes), then
-   disable dry-run and test one control at a time with read-back verification.
+7. **For controls**, test with Read Only ON first (confirm the write is refused
+   and no GATT write is sent), then turn Read Only off and test one control at a time with read-back verification.
 
 ## Clock sync — live hardware validation (2026-08-21)
 

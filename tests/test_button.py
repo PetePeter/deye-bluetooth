@@ -36,8 +36,8 @@ class FakeEntry:
         self.data = {const.CONF_LOGGER_SN: sn}
 
 
-def _button(fake, *, dry_run: bool = False):
-    coordinator = _make_coordinator(fake, dry_run=dry_run)
+def _button(fake, *, read_only: bool = False):
+    coordinator = _make_coordinator(fake, read_only=read_only)
     return DeyeSyncClockButton(coordinator, FakeEntry()), coordinator
 
 
@@ -129,18 +129,20 @@ async def test_the_button_identity_is_stable(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_dry_run_press_touches_nothing(monkeypatch):
-    """Dry run is the safety the whole integration is built around.
+async def test_a_read_only_press_is_refused_and_touches_nothing(monkeypatch):
+    """The read-only lock is the safety the whole integration is built around.
 
     A press is the most direct write a user can issue, so it is the one most
-    likely to be tried while dry-run is still on during setup.
+    likely to be tried while the lock is still on during setup. It must say
+    so in the UI rather than appear to have worked.
     """
     clock = VirtualClock(NOW)
     _install_virtual_clock(monkeypatch, clock)
     fake = FakeInverter(clock, flags=SYNC_ON)
-    button, _ = _button(fake, dry_run=True)
+    button, _ = _button(fake, read_only=True)
 
-    await button.async_press()
+    with pytest.raises(HomeAssistantError, match="Read Only"):
+        await button.async_press()
 
     assert fake.writes == []
     assert fake.latched is None

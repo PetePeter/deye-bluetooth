@@ -90,7 +90,7 @@ async def test_drift_does_not_grow_between_config_reads(monkeypatch):
     # Ten minutes later, on a cycle where config is not due.
     coordinator._config_dirty = False
     coordinator._last_config_read = 1e12
-    coordinator._config_interval = 1e12
+    coordinator._slow_interval = 1e12
     _freeze_now(monkeypatch, NOW + timedelta(minutes=10))
 
     data = await _poll(coordinator)
@@ -582,7 +582,7 @@ async def test_fake_keeps_staged_words_across_an_arm_write():
 
 
 def _sync_coordinator(fake, **kwargs):
-    return _make_coordinator(fake, dry_run=False, **kwargs)
+    return _make_coordinator(fake, read_only=False, **kwargs)
 
 
 def _target_after(*delays: float) -> datetime:
@@ -730,7 +730,7 @@ async def test_a_failed_attempt_gets_a_fresh_link(monkeypatch):
 
     coordinator = coord_mod.DeyeBleCoordinator(
         hass=None, address="AA:BB:CC:DD:EE:FF", transport_factory=factory,
-        dry_run=False, keepalive=True,
+        read_only=False, connection_mode="live_local",
     )
     coordinator._resolve_device = lambda: None
 
@@ -890,7 +890,7 @@ async def test_a_mismatched_attempt_keeps_its_link(monkeypatch):
 
     coordinator = coord_mod.DeyeBleCoordinator(
         hass=None, address="AA:BB:CC:DD:EE:FF", transport_factory=factory,
-        dry_run=False, keepalive=True,
+        read_only=False, connection_mode="live_local",
     )
     coordinator._resolve_device = lambda: None
 
@@ -1313,7 +1313,7 @@ async def test_a_transport_error_cannot_erase_a_known_bad_clock(monkeypatch):
 
     coordinator = coord_mod.DeyeBleCoordinator(
         hass=None, address="AA:BB:CC:DD:EE:FF", transport_factory=factory,
-        dry_run=False,
+        read_only=False,
     )
     coordinator._resolve_device = lambda: None
 
@@ -1387,12 +1387,13 @@ async def test_the_dst_step_always_clears_the_threshold(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sync_in_dry_run_touches_nothing(monkeypatch):
+async def test_sync_while_read_only_is_refused_and_touches_nothing(monkeypatch):
     clock = VirtualClock(NOW)
     _install_virtual_clock(monkeypatch, clock)
     fake = FakeInverter(clock, flags=SYNC_ON)
 
-    await _make_coordinator(fake, dry_run=True).async_sync_clock()
+    with pytest.raises(HomeAssistantError, match="Read Only"):
+        await _make_coordinator(fake, read_only=True).async_sync_clock()
 
     assert fake.ops == []
 
@@ -1417,7 +1418,7 @@ async def test_sync_holds_the_ble_lock_across_the_whole_sequence(monkeypatch):
                   if o[0] == "write" and o[1] == r.REG_TIME_SYNC and o[2] & 1)
     closed = next(i for i, o in enumerate(ops)
                   if o[0] == "write" and o[1] == r.REG_TIME_SYNC and not o[2] & 1)
-    telemetry_starts = {start for start, _count in r.READ_BLOCKS}
+    telemetry_starts = {start for start, _count in r.LIVE_BLOCKS + r.FAST_BLOCKS}
     intruders = [o for o in ops[opened:closed]
                  if o[0] == "read" and o[1] in telemetry_starts]
     assert intruders == []
@@ -1509,7 +1510,7 @@ async def test_known_wrong_survives_a_later_unverified_attempt(monkeypatch):
 
     coordinator = coord_mod.DeyeBleCoordinator(
         hass=None, address="AA:BB:CC:DD:EE:FF", transport_factory=factory,
-        dry_run=False,
+        read_only=False,
     )
     coordinator._resolve_device = lambda: None
 
