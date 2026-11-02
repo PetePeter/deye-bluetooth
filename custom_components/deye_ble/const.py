@@ -5,7 +5,11 @@ DOMAIN = "deye_ble"
 
 CONF_LOGGER_SN = "logger_sn"
 CONF_ADDRESS = "address"
-CONF_PROFILE = "profile"   # entry.data: register map, detected once at setup
+CONF_PROFILE = "profile"   # entry.data / entry.options: register map
+PROFILE_LABELS = {
+    "single_phase": "Single-Phase (LP1/LV)",
+    "three_phase": "Three-Phase (HV)",
+}
 CONF_READ_ONLY = "read_only"
 CONF_REASSERT = "reassert"
 CONF_SCAN_INTERVAL = "scan_interval"
