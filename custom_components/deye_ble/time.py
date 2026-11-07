@@ -11,14 +11,14 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_LOGGER_SN, DOMAIN
 from .entity import device_info
-from .registers import REG_TOU_SLOT2_START, REG_TOU_SLOT3_START, encode_hhmm
+from .registers import PROFILE_THREE_PHASE, REG_TOU_SLOT2_START, REG_TOU_SLOT3_START, encode_hhmm
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    if coordinator.is_single_phase:
+    if coordinator.profile != PROFILE_THREE_PHASE:
         return  # charge window = the three-phase TOU slot 2/3 registers
     async_add_entities([
         DeyeChargeWindowTime(coordinator, entry, "start"),

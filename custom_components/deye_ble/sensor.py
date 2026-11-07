@@ -153,11 +153,58 @@ SINGLE_PHASE_SETTINGS: list[tuple] = [
     ("bms_fault_code", "BMS Fault Code", None, None, None, None, None),
 ]
 
+# Three-phase string inverter (registers.decode_string) — clean on-grid set,
+# zero battery/BMS/TOU entities.
+STRING_SENSORS: list[tuple] = [
+    ("solar_power",             "Solar Power",            "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:solar-power",         0),
+    ("pv_input_power",          "PV Input Power",         "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:solar-power-variant", 0),
+    ("daily_solar",             "Solar Today",            "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:solar-power",         2),
+    ("total_solar",             "Solar Total",            "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:solar-power",         1),
+    ("pv1_power",               "PV1 Power",              "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:solar-panel",         0),
+    ("pv1_voltage",             "PV1 Voltage",            "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",         1),
+    ("pv1_current",             "PV1 Current",            "A",   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",         1),
+    ("pv2_power",               "PV2 Power",              "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:solar-panel",         0),
+    ("pv2_voltage",             "PV2 Voltage",            "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",         1),
+    ("pv2_current",             "PV2 Current",            "A",   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",         1),
+    ("grid_voltage_l1",         "Grid Voltage L1",        "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      None,                      1),
+    ("grid_voltage_l2",         "Grid Voltage L2",        "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      None,                      1),
+    ("grid_voltage_l3",         "Grid Voltage L3",        "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      None,                      1),
+    ("grid_current_l1",         "Grid Current L1",        "A",   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      None,                      1),
+    ("grid_current_l2",         "Grid Current L2",        "A",   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      None,                      1),
+    ("grid_current_l3",         "Grid Current L3",        "A",   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      None,                      1),
+    ("grid_frequency",          "Grid Frequency",         "Hz",  SensorDeviceClass.FREQUENCY,   SensorStateClass.MEASUREMENT,      None,                      2),
+    ("inverter_temp",           "Inverter Temperature",   "°C",  SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      None,                      1),
+    ("inverter_dc_temp",        "Inverter DC Temperature","°C",  SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      None,                      1),
+    ("device_state",            "Inverter State",         None,  None,                          None,                              "mdi:state-machine",       None),
+    ("alarm",                   "Inverter Alarm",         None,  None,                          None,                              "mdi:alert-outline",       None),
+    ("fault",                   "Inverter Fault",         None,  None,                          None,                              "mdi:alert-octagon-outline", None),
+]
+
+STRING_SETTINGS: list[tuple] = [
+    ("inverter_serial",   "Inverter Serial",        None, None,                    None, "mdi:identifier",  None),
+    ("firmware_control",  "Control Board Firmware", None, None,                    None, "mdi:chip",        None),
+    ("firmware_comms",    "Comms Board Firmware",   None, None,                    None, "mdi:chip",        None),
+    ("protocol_version",  "Modbus Protocol",        None, None,                    None, None,              None),
+    ("rated_power",       "Rated Power",            "W",  SensorDeviceClass.POWER, None, None,              0),
+    ("mppt_count",        "MPPT Count",             None, None,                    None, "mdi:solar-panel", None),
+    ("phase_count",       "Phase Count",            None, None,                    None, "mdi:sine-wave",   None),
+    ("alarm_code",        "Alarm Code",             None, None,                    None, None,              None),
+    ("fault_code",        "Fault Code",             None, None,                    None, None,              None),
+]
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    if coordinator.is_string:
+        entities = [DeyeSensor(coordinator, entry, *row) for row in STRING_SENSORS]
+        entities += [DeyeSettingSensor(coordinator, entry, *row) for row in STRING_SETTINGS]
+        entities.append(DeyeInverterClockSensor(coordinator, entry))
+        entities.append(DeyeClockSyncResultSensor(coordinator, entry))
+        entities.append(DeyeClockDriftSensor(coordinator, entry))
+        async_add_entities(entities)
+        return
     if coordinator.is_single_phase:
         # Settings that have a control entity are shown by that entity instead.
         controls = coordinator.register_profile.controls

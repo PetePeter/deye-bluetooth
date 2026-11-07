@@ -300,11 +300,20 @@ DEVICE_TYPE_SINGLE_PHASE = 0x0003
 
 PROFILE_THREE_PHASE = "three_phase"
 PROFILE_SINGLE_PHASE = "single_phase"
+PROFILE_STRING = "string"
+
+# On-grid string inverters (SUN-xK-G0x, no battery) report 2, some firmwares
+# the byte-swapped 0x0200 (ha-solarman deye_string.yaml "Device" lookup).
+DEVICE_TYPES_STRING = frozenset((0x0002, 0x0200))
 
 
 def profile_from_device_type(raw: int) -> str:
     """Map the register-0 device type to a decode profile."""
-    return PROFILE_SINGLE_PHASE if raw == DEVICE_TYPE_SINGLE_PHASE else PROFILE_THREE_PHASE
+    if raw == DEVICE_TYPE_SINGLE_PHASE:
+        return PROFILE_SINGLE_PHASE
+    if raw in DEVICE_TYPES_STRING:
+        return PROFILE_STRING
+    return PROFILE_THREE_PHASE
 
 
 # Reads above 16 registers get no BLE reply.
@@ -635,6 +644,123 @@ def active_tou_slot(slots: list[dict], hhmm: str) -> int | None:
     return None
 
 
+# --- String (on-grid, no battery) profile -----------------------------------
+# Three-phase string inverters (SUN-xK-G03/G04/G05) report device type 0x0002
+# and use the low "string" map (Modbus RTU V118). Addresses, scaling and
+# signedness follow ha-solarman deye_string.yaml; the three-phase hybrid map
+# above reads unmapped memory there (2910 A currents, -100 °C temperatures).
+#
+# Totals are 32-bit, low word first, like the other profiles. Temperatures use
+# the same (raw - 1000) / 10 rule. There is no battery, no CT/meter by default
+# (0x00C6+ meter block stays unread) and no control table: the profile is
+# telemetry-only, so the read-only lock has nothing to guard but the clock.
+
+STR_LIVE_BLOCKS: list[tuple[int, int]] = [
+    (70, 16),   # 70-72 line voltages, 73-78 phase V/I, 79 freq, 80-85 output/input/apparent power
+    (86, 6),    # 86-87 active power, 88-89 reactive power, 90 DC temp, 91 AC temp
+]
+STR_FAST_BLOCKS: list[tuple[int, int]] = [
+    (59, 6),    # 59 state, 60 today production, 63-64 total production
+    (101, 12),  # 101-102 alarm, 103-106 fault, 109-112 PV1/PV2 V + I
+]
+STR_SLOW_BLOCKS: list[tuple[int, int]] = [
+    (2, 16),    # 2 protocol, 3-7 SN, 10-14 firmware, 16-17 rated power
+    (18, 7),    # 18 MPPTs/phases, 22-24 inverter clock
+]
+
+STR_REG_CLOCK = 22  # 22-24, packed like the other profiles (deye_string "Date & Time")
+
+_STR_DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
+    "grid_line_voltage_l1_l2": (70, 0.1,  False, 0),
+    "grid_line_voltage_l2_l3": (71, 0.1,  False, 0),
+    "grid_line_voltage_l3_l1": (72, 0.1,  False, 0),
+    "grid_voltage_l1":         (73, 0.1,  False, 0),
+    "grid_voltage_l2":         (74, 0.1,  False, 0),
+    "grid_voltage_l3":         (75, 0.1,  False, 0),
+    "grid_current_l1":         (76, 0.1,  True,  0),
+    "grid_current_l2":         (77, 0.1,  True,  0),
+    "grid_current_l3":         (78, 0.1,  True,  0),
+    "grid_frequency":          (79, 0.01, False, 0),
+    "inverter_temp":           (91, 0.1,  False, 1000),  # AC side / heatsink
+    "inverter_dc_temp":        (90, 0.1,  False, 1000),
+    "pv1_voltage":             (109, 0.1, False, 0),
+    "pv1_current":             (110, 0.1, False, 0),
+    "pv2_voltage":             (111, 0.1, False, 0),
+    "pv2_current":             (112, 0.1, False, 0),
+    "daily_solar":             (60, 0.1,  False, 0),
+}
+
+_STR_DECODE32: dict[str, tuple] = {
+    "total_solar":             (63, 64, 0.1),
+    "solar_power":             (86, 87, 0.1),        # AC active power, W (unsigned)
+    "pv_input_power":          (82, 83, 0.1),        # DC input power, W (unsigned)
+    "output_apparent_power":   (84, 85, 0.1),        # VA (unsigned)
+    "output_reactive_power":   (88, 89, 0.1, True),  # var (signed)
+}
+_STR_CONFIG_MAP: dict[str, tuple[int, float, bool, int]] = {
+    "protocol_version":        (2, 1, False, 0),
+}
+
+
+def decode_string(words_by_reg: dict[int, list[int]]) -> dict:
+    """Decode a string-inverter poll (any subset of the STR_* tier blocks).
+
+    Same contract as :func:`decode`: keys whose registers were not polled are
+    omitted, never guessed.
+    """
+    result: dict = {}
+    _decode_scalar(words_by_reg, _STR_DECODE_MAP, result)
+    _decode_scalar(words_by_reg, _STR_CONFIG_MAP, result)
+    _decode_32(words_by_reg, _STR_DECODE32, result)
+    _decode_32(words_by_reg, _SP_CONFIG32, result)  # rated_power, same 16-17 layout
+
+    # No dedicated per-string power register: P = U x I (W).
+    for n in (1, 2):
+        v, i = result.get(f"pv{n}_voltage"), result.get(f"pv{n}_current")
+        if v is not None and i is not None:
+            result[f"pv{n}_power"] = round(v * i, 2)
+
+    state = _lookup(words_by_reg, 59)
+    if state is not None:
+        result["device_state"] = SP_DEVICE_STATES.get(state, f"Unknown ({state})")
+
+    alarm = _words(words_by_reg, 101, 2)
+    if alarm is not None:
+        code = _decode_words_bitfield(alarm)
+        result["alarm_code"] = code
+        result["alarm"] = _bit_texts(code, SP_ALARM_BITS)
+    fault = _words(words_by_reg, 103, 4)
+    if fault is not None:
+        code = _decode_words_bitfield(fault)
+        result["fault_code"] = code
+        result["fault"] = _bit_texts(code, SP_FAULT_BITS)
+    if state is not None and alarm is not None and fault is not None:
+        result["inverter_problem"] = (
+            state in (3, 4) or result["alarm_code"] != 0 or result["fault_code"] != 0
+        )
+
+    sn = _words(words_by_reg, 3, 5)
+    if sn is not None:
+        text = bytes(b for w in sn for b in (w >> 8, w & 0xFF)).decode("ascii", "replace")
+        result["inverter_serial"] = text.strip("\x00 ")
+    fw = _words(words_by_reg, 10, 5)
+    if fw is not None:
+        result["firmware_control"] = ".".join(f"{w:04X}" for w in (fw[3], fw[2], fw[1]))
+        result["firmware_comms"] = ".".join(f"{w:04X}" for w in (fw[4], fw[0]))
+    mppt = _lookup(words_by_reg, 18)
+    if mppt is not None:
+        result["mppt_count"] = mppt >> 8
+        result["phase_count"] = mppt & 0xFF
+
+    clock_words = _words(words_by_reg, STR_REG_CLOCK, CLOCK_WORD_COUNT)
+    if clock_words is not None:
+        clock = decode_clock(clock_words)
+        if clock is not None:
+            result["inverter_clock"] = clock
+
+    return result
+
+
 # --- Profiles ---------------------------------------------------------------
 
 TIER_LIVE = "live"
@@ -716,6 +842,15 @@ PROFILES: dict[str, RegisterProfile] = {
         clock_reg=SP_REG_CLOCK,
         # Unverified on single-phase: a clock sync there writes only the clock
         # block, never the three-phase Time Sync address.
+        time_sync_reg=None,
+    ),
+    PROFILE_STRING: RegisterProfile(
+        live=STR_LIVE_BLOCKS,
+        fast=STR_FAST_BLOCKS,
+        slow=STR_SLOW_BLOCKS,
+        decode=decode_string,
+        controls={},
+        clock_reg=STR_REG_CLOCK,
         time_sync_reg=None,
     ),
 }

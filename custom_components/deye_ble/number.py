@@ -34,7 +34,7 @@ from .const import (
     MIN_SLOW_INTERVAL,
 )
 from .entity import OptionEntity, device_info
-from .registers import DISCHARGE_SOC_REGS
+from .registers import DISCHARGE_SOC_REGS, PROFILE_THREE_PHASE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ async def async_setup_entry(
     entities += [
         cls(coordinator, entry, sn) for cls in REGISTER_NUMBERS if cls._data_key in controls
     ]
-    if not coordinator.is_single_phase:
+    if coordinator.profile == PROFILE_THREE_PHASE:
         # Three-phase TOU layout only: the floor spans five slot registers.
         entities.append(DeyeDischargeSoc(coordinator, entry, sn))
     async_add_entities(entities)

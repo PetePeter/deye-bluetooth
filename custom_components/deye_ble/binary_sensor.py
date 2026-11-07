@@ -20,6 +20,15 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    if coordinator.is_string:
+        async_add_entities([
+            DeyeGridConnected(coordinator, entry),
+            DeyeFlag(
+                coordinator, entry, "inverter_problem", "Inverter Problem",
+                BinarySensorDeviceClass.PROBLEM, None, False,
+            ),
+        ])
+        return
     if coordinator.is_single_phase:
         # Single-phase: relays, problem flags and setting flags without a
         # switch; Time Sync is not read on this map.

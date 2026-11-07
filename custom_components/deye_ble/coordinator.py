@@ -290,6 +290,10 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         return self._profile == r.PROFILE_SINGLE_PHASE
 
     @property
+    def is_string(self) -> bool:
+        return self._profile == r.PROFILE_STRING
+
+    @property
     def register_profile(self) -> r.RegisterProfile:
         return r.PROFILES[self._profile]
 
@@ -403,7 +407,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             drifted = detect_drift(
                 self._tracked_values, data,
                 {reg: key for key, reg in self.register_profile.controls.items()}
-                if self.is_single_phase else None,
+                if self._profile != r.PROFILE_THREE_PHASE else None,
             )
             if drifted:
                 _LOGGER.info("reassert: correcting %d drifted register(s)", len(drifted))

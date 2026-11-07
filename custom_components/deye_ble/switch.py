@@ -22,6 +22,7 @@ from .entity import OptionEntity, device_info
 from .registers import (
     GEN_PEAK_SHAVE_MASK,
     GRID_PEAK_SHAVE_MASK,
+    PROFILE_THREE_PHASE,
     REG_PEAK_SHAVING_FLAGS,
     set_flag,
 )
@@ -42,7 +43,7 @@ async def async_setup_entry(
             for key, name, icon in SINGLE_PHASE_SWITCHES
             if key in controls
         ]
-    else:
+    elif coordinator.profile == PROFILE_THREE_PHASE:
         entities += [
             DeyeGridPeakShaving(coordinator, entry, sn),
             DeyeGenPeakShaving(coordinator, entry, sn),
