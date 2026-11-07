@@ -1,9 +1,11 @@
 # Deye Bluetooth (Local) — Home Assistant Integration
 
-Local control of a Deye hybrid inverter over **Bluetooth Low Energy**, with **no
-cloud dependency**. This integration reads all telemetry and writes all controls
-directly to the inverter's logger stick via BLE, using the same Modbus registers
-as the Deye Cloud.
+Local monitoring and control of Deye inverters over **Bluetooth Low Energy**, with
+**no cloud dependency**. Supports three-phase hybrid inverters, single-phase LV
+hybrid inverters (SUN-xK-SG0xLP1), and **three-phase on-grid string inverters**
+(SUN-xK-G0x, Modbus V118). This integration reads all telemetry and writes all
+supported controls directly to the inverter's logger stick via BLE, using the same
+Modbus registers as the Deye Cloud.
 
 ## Architecture
 
@@ -99,12 +101,17 @@ drives all entity unique IDs.
 ### Inverter profile
 
 On first setup the integration reads register 0 (device type) once and stores
-the result in the config entry: `0x0003` selects the **single-phase** map
-(SUN-xK-SG0xLP1), anything else the **three-phase** map. Polls and writes never
-re-detect; re-adding the device does, and so does picking
+the result in the config entry:
+- `0x0003`: **Single-phase** LV hybrid map (SUN-xK-SG0xLP1)
+- `0x0002` or `0x0200`: **String (on-grid)** three-phase map (SUN-xK-G0x, Modbus V118)
+- Any other value: **Three-phase** hybrid map
+
+Polls and writes never re-detect; re-adding the device does, and so does picking
 **Auto-detect** under Options → Inverter type. That option can also pin the
-map by hand if detection got it wrong. Each profile has its own register map and
-its own control table, so a control exists only where its register is known.
+map by hand (`Three-phase`, `Single-phase`, or `String (on-grid)`) if detection
+got it wrong. Each profile has its own register map and its own control table,
+so a control exists only where its register is known. On-grid string inverters
+have no battery or TOU hardware and operate in telemetry-only monitoring mode.
 
 ### Options
 
@@ -120,7 +127,7 @@ After setup, **Settings → Devices & Services → Deye Bluetooth (Local) → Op
 | **Slow poll interval** | 300 s | Slow tier (settings, clock, BMS limits, lifetime info), 300–3600 s. |
 | **Cloud quiet window every / length** | 300 s / 30 s | Live + Deye Cloud only. |
 | **Reassert** | OFF | If a cloud/app write changes a register that HA last set, re-apply the HA value on the next poll cycle. |
-| **Inverter type** | detected | Auto-detect / Three-phase / Single-phase. Pins the register map; saving a change reloads the integration. |
+| **Inverter type** | detected | Auto-detect / Three-phase / Single-phase / String (on-grid). Pins the register map; saving a change reloads the integration. |
 
 Installs from before 0.2 are migrated: `dry_run` becomes `read_only`, keepalive
 off becomes Standard, keepalive on becomes Live local only at the old interval.
@@ -256,6 +263,22 @@ use that map's registers (write/read-back verified on a SUN-8K-SG01LP1):
 | `select` | Energy Pattern / Work Mode / GEN Port Mode | 243 / 244 / 235 |
 | `switch` | Grid Charging / Solar Sell | 232 / 247 |
 | `button` | Sync Clock | 22–24, one block write; no Time Sync edge (unverified on this map) |
+
+On the **string** profile (three-phase on-grid, SUN-xK-G0x), the inverter operates
+without batteries, SmartLoad, or TOU slots. It generates no control entities,
+protecting against erroneous writes. Instead, it exposes:
+
+- **Solar & PV Strings**: `Solar Power`, `PV Input Power`, `Solar Today`, `Solar Total`,
+  `PV1 Power`, `PV1 Voltage`, `PV1 Current`, `PV2 Power`, `PV2 Voltage`, `PV2 Current`.
+- **Three-phase Grid**: `Grid Voltage L1`, `Grid Voltage L2`, `Grid Voltage L3`,
+  `Grid Current L1`, `Grid Current L2`, `Grid Current L3`, `Grid Frequency`.
+- **Inverter Health & State**: `Inverter Temperature`, `Inverter DC Temperature`,
+  `Inverter State`, `Inverter Alarm`, `Inverter Fault`.
+- **Diagnostics & Settings**: `Inverter Serial`, `Control Board Firmware`,
+  `Comms Board Firmware`, `Modbus Protocol`, `Rated Power`, `MPPT Count`,
+  `Phase Count`, `Alarm Code`, `Fault Code`, `Inverter Clock`, `Clock Drift`.
+- **Binary Sensors**: `Grid Connected` (inferred from phase voltages and frequency)
+  and `Inverter Problem` (tripped when any alarm or fault bit is active in registers 101–108).
 
 Every profile also gets the CONFIG entities `Read Only`, `Connection Mode` and
 the poll-interval numbers.
