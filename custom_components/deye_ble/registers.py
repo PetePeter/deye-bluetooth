@@ -681,8 +681,8 @@ _STR_DECODE_MAP: dict[str, tuple[int, float, bool, int]] = {
     "grid_current_l2":         (77, 0.1,  True,  0),
     "grid_current_l3":         (78, 0.1,  True,  0),
     "grid_frequency":          (79, 0.01, False, 0),
-    "inverter_temp":           (91, 0.1,  False, 1000),  # AC side / heatsink
-    "inverter_dc_temp":        (90, 0.1,  False, 1000),
+    "inverter_temp":           (90, 0.1,  False, 1000),  # DC side
+    "inverter_ac_temp":        (91, 0.1,  False, 1000),  # AC side / heatsink
     "pv1_voltage":             (109, 0.1, False, 0),
     "pv1_current":             (110, 0.1, False, 0),
     "pv2_voltage":             (111, 0.1, False, 0),
@@ -788,6 +788,7 @@ class RegisterProfile:
     decode: Callable[[dict[int, list[int]]], dict]
     controls: dict[str, int]
     clock_reg: int
+    clock_writable: bool
     # None where the profile has no Time Sync commit edge to drive.
     time_sync_reg: int | None
 
@@ -812,6 +813,7 @@ PROFILES: dict[str, RegisterProfile] = {
             "gen_peak_power": REG_GEN_PEAK_POWER,
         },
         clock_reg=REG_CLOCK,
+        clock_writable=True,
         time_sync_reg=REG_TIME_SYNC,
     ),
     PROFILE_SINGLE_PHASE: RegisterProfile(
@@ -840,6 +842,7 @@ PROFILES: dict[str, RegisterProfile] = {
             "grid_peak_power": 293,
         },
         clock_reg=SP_REG_CLOCK,
+        clock_writable=True,
         # Unverified on single-phase: a clock sync there writes only the clock
         # block, never the three-phase Time Sync address.
         time_sync_reg=None,
@@ -851,6 +854,7 @@ PROFILES: dict[str, RegisterProfile] = {
         decode=decode_string,
         controls={},
         clock_reg=STR_REG_CLOCK,
+        clock_writable=False,
         time_sync_reg=None,
     ),
 }

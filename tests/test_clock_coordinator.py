@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +17,7 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.exceptions import HomeAssistantError
 
+import custom_components.deye_ble as integration_mod
 from custom_components.deye_ble import const
 from custom_components.deye_ble import coordinator as coord_mod
 from custom_components.deye_ble import protocol as p
@@ -1394,6 +1396,38 @@ async def test_sync_while_read_only_is_refused_and_touches_nothing(monkeypatch):
 
     with pytest.raises(HomeAssistantError, match="Read Only"):
         await _make_coordinator(fake, read_only=True).async_sync_clock()
+
+    assert fake.ops == []
+
+
+@pytest.mark.asyncio
+async def test_string_clock_sync_and_commit_are_refused_before_io():
+    fake = FakeInverter(VirtualClock(NOW), flags=SYNC_ON)
+    coordinator = _sync_coordinator(fake, profile=r.PROFILE_STRING)
+
+    with pytest.raises(HomeAssistantError, match="Clock sync is not supported"):
+        await coordinator.async_sync_clock()
+
+    with pytest.raises(HomeAssistantError, match="Clock sync is not supported"):
+        await coordinator._commit_clock(fake, SYNC_ON, 1)
+
+    assert fake.ops == []
+
+
+@pytest.mark.asyncio
+async def test_sync_clock_service_refuses_string_without_writing():
+    fake = FakeInverter(VirtualClock(NOW), flags=SYNC_ON)
+    coordinator = _sync_coordinator(fake, profile=r.PROFILE_STRING)
+    handlers = {}
+    services = SimpleNamespace(
+        async_register=lambda _domain, name, handler: handlers.setdefault(name, handler)
+    )
+    integration_mod.register_sync_clock_service(
+        SimpleNamespace(services=services), coordinator,
+    )
+
+    with pytest.raises(HomeAssistantError, match="Clock sync is not supported"):
+        await handlers["sync_clock"](SimpleNamespace(data={}))
 
     assert fake.ops == []
 

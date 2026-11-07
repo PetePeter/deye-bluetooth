@@ -16,6 +16,20 @@ PLATFORMS: list[str] = [
 ]
 
 
+def register_sync_clock_service(hass, coordinator) -> None:
+    """Register the clock service for one config entry."""
+    async def _sync_clock_service(call):
+        """Set the inverter RTC to HA's local time (see coordinator.async_sync_clock)."""
+        # min_drift is optional and absent by default, so a human calling this
+        # service always gets a sync. Only the automation passes a threshold.
+        raw = call.data.get("min_drift")
+        await coordinator.async_sync_clock_and_refresh(
+            min_drift=None if raw is None else int(raw)
+        )
+
+    hass.services.async_register(DOMAIN, "sync_clock", _sync_clock_service)
+
+
 async def async_setup_entry(hass, entry) -> bool:
     """Set up Deye BLE from a config entry."""
     from homeassistant.config_entries import ConfigEntry  # noqa: F811
@@ -25,9 +39,11 @@ async def async_setup_entry(hass, entry) -> bool:
 
     _LOGGER.info("Setting up Deye BLE for %s (%s)", logger_sn, address)
 
+    console_uuids: dict[str, str] = {}
+
     def _make_transport(ble_device):
         from .transport import DeyeBleTransport
-        return DeyeBleTransport(ble_device)
+        return DeyeBleTransport(ble_device, **console_uuids)
 
     from homeassistant.exceptions import ConfigEntryNotReady
 
@@ -42,6 +58,7 @@ async def async_setup_entry(hass, entry) -> bool:
     coordinator = DeyeBleCoordinator(
         hass, address=address, transport_factory=_make_transport,
         profile=entry.data.get(CONF_PROFILE, r.PROFILE_THREE_PHASE),
+        console_uuids=console_uuids,
     )
     await coordinator.async_apply_options(entry.options)
 
@@ -81,16 +98,7 @@ async def async_setup_entry(hass, entry) -> bool:
 
     hass.services.async_register(DOMAIN, "dump_registers", _dump_registers_service)
 
-    async def _sync_clock_service(call):
-        """Set the inverter RTC to HA's local time (see coordinator.async_sync_clock)."""
-        # min_drift is optional and absent by default, so a human calling this
-        # service always gets a sync. Only the automation passes a threshold.
-        raw = call.data.get("min_drift")
-        await coordinator.async_sync_clock_and_refresh(
-            min_drift=None if raw is None else int(raw)
-        )
-
-    hass.services.async_register(DOMAIN, "sync_clock", _sync_clock_service)
+    register_sync_clock_service(hass, coordinator)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

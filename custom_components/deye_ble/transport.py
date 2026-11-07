@@ -46,22 +46,26 @@ class DeyeBleTransport:
             await t.write(0x008F, 100)
     """
 
-    _CONSOLE_CACHE: dict[str, tuple[str, str]] = {}
-
-    def __init__(self, ble_device, timeout: float = DEFAULT_TIMEOUT):
+    def __init__(
+        self, ble_device, timeout: float = DEFAULT_TIMEOUT,
+        write_uuid: str = WRITE_CHAR, notify_uuid: str = NOTIFY_CHAR,
+    ):
         self._device = ble_device
         self._address = getattr(ble_device, "address", None)
         # For establish_connection logging; BLEDevice exposes name/address.
         self._name = getattr(ble_device, "name", None) or self._address or "deye"
-        self._write_char, self._notify_char = self._CONSOLE_CACHE.get(
-            self._address or "", (WRITE_CHAR, NOTIFY_CHAR)
-        )
+        self._write_char, self._notify_char = write_uuid, notify_uuid
         self._timeout = timeout
         self._disconnect_timeout = DISCONNECT_TIMEOUT
         self._client: BleakClient | None = None
         self._reply: asyncio.Future[str] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._handshook = False
+
+    @property
+    def console_uuids(self) -> tuple[str, str]:
+        """Write and notify UUIDs selected for this transport."""
+        return self._write_char, self._notify_char
 
     async def __aenter__(self) -> "DeyeBleTransport":
         await self.connect()
@@ -129,8 +133,6 @@ class DeyeBleTransport:
                 continue
             self._write_char, self._notify_char = write_char, notify_char
             self._handshook = True
-            if self._address:
-                self._CONSOLE_CACHE[self._address] = (write_char, notify_char)
             _LOGGER.warning(
                 "Deye BLE console discovered on write=%s notify=%s",
                 write_char, notify_char,

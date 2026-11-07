@@ -97,10 +97,12 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         cloud_sync_interval: int = DEFAULT_CLOUD_SYNC_INTERVAL,
         cloud_window: int = DEFAULT_CLOUD_WINDOW,
         profile: str = r.PROFILE_THREE_PHASE,
+        console_uuids: dict[str, str] | None = None,
     ) -> None:
         super().__init__(hass, _LOGGER, name=DOMAIN)
         self._address = address
         self._transport_factory = transport_factory
+        self._console_uuids = console_uuids if console_uuids is not None else {}
         self._profile = profile
         self._scan_interval = scan_interval
         self._live_interval = live_interval
@@ -154,6 +156,10 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # device is momentarily absent.
         if self._read_only:
             raise HomeAssistantError(READ_ONLY_ERROR)
+
+    def _refuse_if_clock_not_writable(self) -> None:
+        if not self.register_profile.clock_writable:
+            raise HomeAssistantError("Clock sync is not supported for this inverter profile")
 
     @property
     def reassert(self) -> bool:
@@ -265,12 +271,14 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         """
         if not self._hold_link():
             async with self._transport_factory(ble_device) as transport:
+                self._remember_console_uuids(transport)
                 yield transport
             return
 
         if self._persistent is None:
             transport = self._transport_factory(ble_device)
             await transport.connect()
+            self._remember_console_uuids(transport)
             self._persistent = transport
         try:
             yield self._persistent
@@ -279,6 +287,11 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             # keep handing back a possibly half-open connection.
             await self._drop_persistent()
             raise
+
+    def _remember_console_uuids(self, transport) -> None:
+        pair = getattr(transport, "console_uuids", None)
+        if pair is not None:
+            self._console_uuids.update(write_uuid=pair[0], notify_uuid=pair[1])
 
     @property
     def profile(self) -> str:
@@ -560,6 +573,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Raises HomeAssistantError if no attempt verifies, or if the clock landed
         but Time Sync could not be re-enabled.
         """
+        self._refuse_if_clock_not_writable()
         self._refuse_if_read_only()
 
         ble_device = self._resolve_device()
@@ -814,6 +828,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Transport errors propagate: the caller needs them to leave the session
         context so a broken link is dropped before the next attempt.
         """
+        self._refuse_if_clock_not_writable()
         time_sync_reg = self.register_profile.time_sync_reg
         if time_sync_reg is not None:
             await transport.write(

@@ -76,7 +76,7 @@ def test_blocks_fit_ble_reads_and_do_not_overlap(blocks):
     ("grid_current_l3", 1.0),
     ("grid_frequency", 49.96),
     ("inverter_temp", 31.0),
-    ("inverter_dc_temp", 31.0),
+    ("inverter_ac_temp", 31.0),
     ("device_state", "Normal"),
     ("alarm", "OK"),
     ("fault", "OK"),
@@ -106,11 +106,28 @@ def test_no_battery_or_bms_keys():
     assert not (forbidden & data.keys())
 
 
+def test_string_temperature_keys_match_register_meanings():
+    words = dict(TELEMETRY)
+    temperatures = list(words[86])
+    temperatures[90 - 86] = 1310
+    temperatures[91 - 86] = 1420
+    words[86] = temperatures
+
+    decoded = r.decode_string(words)
+
+    assert decoded["inverter_temp"] == 31.0
+    assert decoded["inverter_ac_temp"] == 42.0
+    assert "inverter_dc_temp" not in decoded
+
+
 def test_string_profile_has_no_writable_controls():
     profile = r.PROFILES[r.PROFILE_STRING]
     assert profile.controls == {}
     assert profile.time_sync_reg is None
     assert profile.clock_reg == r.STR_REG_CLOCK == 22
+    assert profile.clock_writable is False
+    assert r.PROFILES[r.PROFILE_THREE_PHASE].clock_writable is True
+    assert r.PROFILES[r.PROFILE_SINGLE_PHASE].clock_writable is True
 
 
 def test_alarm_and_fault_drive_inverter_problem():
@@ -177,7 +194,8 @@ async def test_live_only_poll_reads_live_blocks():
     assert t.reads == r.STR_LIVE_BLOCKS
     assert {
         "solar_power", "pv_input_power", "grid_voltage_l1", "grid_voltage_l2",
-        "grid_voltage_l3", "grid_current_l1", "grid_frequency", "inverter_temp",
+        "grid_voltage_l3", "grid_current_l1", "grid_frequency",
+        "inverter_temp", "inverter_ac_temp",
     } <= data.keys()
     assert "pv1_power" not in data and "rated_power" not in data
 

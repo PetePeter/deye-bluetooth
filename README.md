@@ -272,7 +272,7 @@ protecting against erroneous writes. Instead, it exposes:
   `PV1 Power`, `PV1 Voltage`, `PV1 Current`, `PV2 Power`, `PV2 Voltage`, `PV2 Current`.
 - **Three-phase Grid**: `Grid Voltage L1`, `Grid Voltage L2`, `Grid Voltage L3`,
   `Grid Current L1`, `Grid Current L2`, `Grid Current L3`, `Grid Frequency`.
-- **Inverter Health & State**: `Inverter Temperature`, `Inverter DC Temperature`,
+- **Inverter Health & State**: `Inverter Temperature` (DC side), `Inverter AC Temperature`,
   `Inverter State`, `Inverter Alarm`, `Inverter Fault`.
 - **Diagnostics & Settings**: `Inverter Serial`, `Control Board Firmware`,
   `Comms Board Firmware`, `Modbus Protocol`, `Rated Power`, `MPPT Count`,
@@ -294,7 +294,7 @@ the poll-interval numbers.
 | Service | Description |
 |---------|-------------|
 | `deye_ble.dump_registers` | Diagnostic read-only sweep of holding registers to `/config/deye_register_dump.txt`. Args: `start`, `end`, `block`. |
-| `deye_ble.sync_clock` | Sets the inverter RTC to HA's local time, then refreshes so the entities reflect the result before the call returns. Optional `min_drift` (seconds) makes it a check that only writes when drift exceeds the threshold; called without it, it always syncs. Refused while Read Only is on. |
+| `deye_ble.sync_clock` | Sets the inverter RTC to HA's local time, then refreshes so the entities reflect the result before the call returns. Optional `min_drift` (seconds) makes it a check that only writes when drift exceeds the threshold; called without it, it always syncs. Refused while Read Only is on or when the selected profile does not support clock writes. |
 
 `sync_clock` is a sequence, not a write: the RTC commits its staged registers
 only when Time Sync (`0x00E4` bit 0) falls from on to off.
