@@ -1,0 +1,346 @@
+[
+  {
+    "device_class": "connectivity",
+    "entity_category": null,
+    "name": "Grid Connected",
+    "platform": "binary_sensor",
+    "unique_id": "P1196-GOLDEN_grid_connected",
+    "unit": null
+  },
+  {
+    "device_class": "problem",
+    "entity_category": null,
+    "name": "Inverter Problem",
+    "platform": "binary_sensor",
+    "unique_id": "P1196-GOLDEN_inverter_problem",
+    "unit": null
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "config",
+    "name": "Cloud Quiet Window Every",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_cloud_sync_interval",
+    "unit": "s"
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "config",
+    "name": "Cloud Quiet Window Length",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_cloud_window",
+    "unit": "s"
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "config",
+    "name": "Live Poll Interval",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_live_interval",
+    "unit": "s"
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "config",
+    "name": "Standard Poll Interval",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_scan_interval",
+    "unit": "s"
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "config",
+    "name": "Slow Poll Interval",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_slow_interval",
+    "unit": "s"
+  },
+  {
+    "device_class": null,
+    "entity_category": "config",
+    "name": "Connection Mode",
+    "platform": "select",
+    "unique_id": "P1196-GOLDEN_connection_mode",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "Inverter Alarm",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_alarm",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Alarm Code",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_alarm_code",
+    "unit": null
+  },
+  {
+    "device_class": "enum",
+    "entity_category": "diagnostic",
+    "name": "Clock Sync Result",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_clock_sync_result",
+    "unit": null
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Solar Today",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_daily_solar",
+    "unit": "kWh"
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "Inverter State",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_device_state",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "Inverter Fault",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_fault",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Fault Code",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_fault_code",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Comms Board Firmware",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_firmware_comms",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Control Board Firmware",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_firmware_control",
+    "unit": null
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "Grid Current L1",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_current_l1",
+    "unit": "A"
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "Grid Current L2",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_current_l2",
+    "unit": "A"
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "Grid Current L3",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_current_l3",
+    "unit": "A"
+  },
+  {
+    "device_class": "frequency",
+    "entity_category": null,
+    "name": "Grid Frequency",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_frequency",
+    "unit": "Hz"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "Grid Voltage L1",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_voltage_l1",
+    "unit": "V"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "Grid Voltage L2",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_voltage_l2",
+    "unit": "V"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "Grid Voltage L3",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_voltage_l3",
+    "unit": "V"
+  },
+  {
+    "device_class": "temperature",
+    "entity_category": null,
+    "name": "Inverter AC Temperature",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_ac_temp",
+    "unit": "\u00b0C"
+  },
+  {
+    "device_class": "timestamp",
+    "entity_category": "diagnostic",
+    "name": "Inverter Clock",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_clock",
+    "unit": null
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "diagnostic",
+    "name": "Inverter Clock Drift",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_clock_drift",
+    "unit": "s"
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Inverter Serial",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_serial",
+    "unit": null
+  },
+  {
+    "device_class": "temperature",
+    "entity_category": null,
+    "name": "Inverter DC Temperature",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_temp",
+    "unit": "\u00b0C"
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "MPPT Count",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_mppt_count",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Phase Count",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_phase_count",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Modbus Protocol",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_protocol_version",
+    "unit": null
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "PV1 Current",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv1_current",
+    "unit": "A"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "PV1 Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv1_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "PV1 Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv1_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "PV2 Current",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv2_current",
+    "unit": "A"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "PV2 Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv2_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "PV2 Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv2_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "PV Input Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv_input_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "power",
+    "entity_category": "diagnostic",
+    "name": "Rated Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_rated_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "Solar Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_solar_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Solar Total",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_total_solar",
+    "unit": "kWh"
+  },
+  {
+    "device_class": null,
+    "entity_category": "config",
+    "name": "Read Only",
+    "platform": "switch",
+    "unique_id": "P1196-GOLDEN_read_only",
+    "unit": null
+  }
+]

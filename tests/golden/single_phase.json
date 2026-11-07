@@ -1,0 +1,962 @@
+[
+  {
+    "device_class": "problem",
+    "entity_category": null,
+    "name": "BMS Problem",
+    "platform": "binary_sensor",
+    "unique_id": "P1196-GOLDEN_bms_problem",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Generator Charging",
+    "platform": "binary_sensor",
+    "unique_id": "P1196-GOLDEN_gen_charge_enabled",
+    "unit": null
+  },
+  {
+    "device_class": "connectivity",
+    "entity_category": null,
+    "name": "Grid Connected",
+    "platform": "binary_sensor",
+    "unique_id": "P1196-GOLDEN_grid_connected",
+    "unit": null
+  },
+  {
+    "device_class": "problem",
+    "entity_category": null,
+    "name": "Inverter Problem",
+    "platform": "binary_sensor",
+    "unique_id": "P1196-GOLDEN_inverter_problem",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Time of Use Enabled",
+    "platform": "binary_sensor",
+    "unique_id": "P1196-GOLDEN_tou_enabled",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "config",
+    "name": "Sync Clock",
+    "platform": "button",
+    "unique_id": "P1196-GOLDEN_sync_clock",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "Battery Low SOC",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_batt_low_soc",
+    "unit": "%"
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "Battery Restart SOC",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_batt_restart_soc",
+    "unit": "%"
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "Battery Shutdown SOC",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_batt_shutdown_soc",
+    "unit": "%"
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "config",
+    "name": "Cloud Quiet Window Every",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_cloud_sync_interval",
+    "unit": "s"
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "config",
+    "name": "Cloud Quiet Window Length",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_cloud_window",
+    "unit": "s"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "Gen Peak Shave Power",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_gen_peak_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "Grid Charge Current",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_grid_charge_current",
+    "unit": "A"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "Grid Peak Shave Power",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_grid_peak_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "config",
+    "name": "Live Poll Interval",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_live_interval",
+    "unit": "s"
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "Max Charge Current",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_max_charge_current",
+    "unit": "A"
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "Max Discharge Current",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_max_discharge_current",
+    "unit": "A"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "Max Sell Power",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_max_sell_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "config",
+    "name": "Standard Poll Interval",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_scan_interval",
+    "unit": "s"
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "config",
+    "name": "Slow Poll Interval",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_slow_interval",
+    "unit": "s"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "SmartLoad Min Solar Power",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_smartload_min_solar_power",
+    "unit": "W"
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "SmartLoad OFF Battery SOC",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_smartload_off_soc",
+    "unit": "%"
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "SmartLoad ON Battery SOC",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_smartload_on_soc",
+    "unit": "%"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "Zero Export Power",
+    "platform": "number",
+    "unique_id": "P1196-GOLDEN_zero_export_power",
+    "unit": "W"
+  },
+  {
+    "device_class": null,
+    "entity_category": "config",
+    "name": "Connection Mode",
+    "platform": "select",
+    "unique_id": "P1196-GOLDEN_connection_mode",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "Energy Pattern",
+    "platform": "select",
+    "unique_id": "P1196-GOLDEN_energy_pattern",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "GEN Port Mode",
+    "platform": "select",
+    "unique_id": "P1196-GOLDEN_io_mode",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "Work Mode",
+    "platform": "select",
+    "unique_id": "P1196-GOLDEN_work_mode",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "Inverter Alarm",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_alarm",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Alarm Code",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_alarm_code",
+    "unit": null
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": "diagnostic",
+    "name": "Low Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_batt_low_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": "diagnostic",
+    "name": "Restart Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_batt_restart_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": "diagnostic",
+    "name": "Shutdown Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_batt_shutdown_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": "diagnostic",
+    "name": "Absorption Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_battery_absorption_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Battery Capacity",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_battery_capacity",
+    "unit": "Ah"
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "Battery Current",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_battery_current",
+    "unit": "A"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": "diagnostic",
+    "name": "Empty Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_battery_empty_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": "diagnostic",
+    "name": "Float Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_battery_float_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Battery Mode",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_battery_mode",
+    "unit": null
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "Battery Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_battery_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "battery",
+    "entity_category": null,
+    "name": "Battery SOC",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_battery_soc",
+    "unit": "%"
+  },
+  {
+    "device_class": "temperature",
+    "entity_category": null,
+    "name": "Battery Temperature",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_battery_temp",
+    "unit": "\u00b0C"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "Battery Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_battery_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "BMS Alarm Code",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_bms_alarm_code",
+    "unit": null
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "BMS Charge Current Limit",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_bms_charge_current_limit",
+    "unit": "A"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "BMS Charge Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_bms_charge_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "BMS Current",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_bms_current",
+    "unit": "A"
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "BMS Discharge Current Limit",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_bms_discharge_current_limit",
+    "unit": "A"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "BMS Discharge Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_bms_discharge_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "BMS Fault Code",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_bms_fault_code",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "BMS Protocol",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_bms_protocol",
+    "unit": null
+  },
+  {
+    "device_class": "battery",
+    "entity_category": null,
+    "name": "BMS SOC",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_bms_soc",
+    "unit": "%"
+  },
+  {
+    "device_class": "temperature",
+    "entity_category": null,
+    "name": "BMS Temperature",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_bms_temp",
+    "unit": "\u00b0C"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "BMS Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_bms_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": "enum",
+    "entity_category": "diagnostic",
+    "name": "Clock Sync Result",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_clock_sync_result",
+    "unit": null
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Battery Charge Today",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_daily_battery_charge",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Battery Discharge Today",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_daily_battery_discharge",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Generator Today",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_daily_gen",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Grid Export Today",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_daily_grid_export",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Grid Import Today",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_daily_grid_import",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Inverter Energy Today",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_daily_inverter_energy",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Consumption Today",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_daily_load",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Solar Today",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_daily_solar",
+    "unit": "kWh"
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "Inverter State",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_device_state",
+    "unit": null
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "External CT Current",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_external_ct_current",
+    "unit": "A"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "External CT Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_external_ct_power",
+    "unit": "W"
+  },
+  {
+    "device_class": null,
+    "entity_category": null,
+    "name": "Inverter Fault",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_fault",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Fault Code",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_fault_code",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Comms Board Firmware",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_firmware_comms",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Control Board Firmware",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_firmware_control",
+    "unit": null
+  },
+  {
+    "device_class": "current",
+    "entity_category": "diagnostic",
+    "name": "Generator Charge Current",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_gen_charge_current",
+    "unit": "A"
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Generator Charge Start SOC",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_gen_charge_start_soc",
+    "unit": "%"
+  },
+  {
+    "device_class": "frequency",
+    "entity_category": null,
+    "name": "Generator Frequency",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_gen_frequency",
+    "unit": "Hz"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "Generator Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_gen_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "Generator Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_gen_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Grid Charge Start SOC",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_charge_start_soc",
+    "unit": "%"
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "Grid Current",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_current",
+    "unit": "A"
+  },
+  {
+    "device_class": "frequency",
+    "entity_category": null,
+    "name": "Grid Frequency",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_frequency",
+    "unit": "Hz"
+  },
+  {
+    "device_class": "frequency",
+    "entity_category": "diagnostic",
+    "name": "Grid Frequency High Limit",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_frequency_high_limit",
+    "unit": "Hz"
+  },
+  {
+    "device_class": "frequency",
+    "entity_category": "diagnostic",
+    "name": "Grid Frequency Low Limit",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_frequency_low_limit",
+    "unit": "Hz"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "Grid Power (Inverter Side)",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_inverter_side_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "Grid Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "diagnostic",
+    "name": "Grid Reconnect Time",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_reconnect_time",
+    "unit": "s"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "Grid Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": "diagnostic",
+    "name": "Grid Voltage High Limit",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_voltage_high_limit",
+    "unit": "V"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": "diagnostic",
+    "name": "Grid Voltage Low Limit",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_grid_voltage_low_limit",
+    "unit": "V"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "House Load",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_house_load",
+    "unit": "W"
+  },
+  {
+    "device_class": "temperature",
+    "entity_category": null,
+    "name": "Inverter AC Temperature",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_ac_temp",
+    "unit": "\u00b0C"
+  },
+  {
+    "device_class": "timestamp",
+    "entity_category": "diagnostic",
+    "name": "Inverter Clock",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_clock",
+    "unit": null
+  },
+  {
+    "device_class": "duration",
+    "entity_category": "diagnostic",
+    "name": "Inverter Clock Drift",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_clock_drift",
+    "unit": "s"
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "Inverter Output Current",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_output_current",
+    "unit": "A"
+  },
+  {
+    "device_class": "frequency",
+    "entity_category": null,
+    "name": "Inverter Output Frequency",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_output_frequency",
+    "unit": "Hz"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "Inverter Output",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_output_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "Inverter Output Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_output_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Inverter Serial",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_serial",
+    "unit": null
+  },
+  {
+    "device_class": "temperature",
+    "entity_category": null,
+    "name": "Inverter Temperature",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_inverter_temp",
+    "unit": "\u00b0C"
+  },
+  {
+    "device_class": "frequency",
+    "entity_category": null,
+    "name": "Load Frequency",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_load_frequency",
+    "unit": "Hz"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "Load Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_load_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "MPPT Count",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_mppt_count",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Modbus Protocol",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_protocol_version",
+    "unit": null
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "PV1 Current",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv1_current",
+    "unit": "A"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "PV1 Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv1_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "PV1 Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv1_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": "current",
+    "entity_category": null,
+    "name": "PV2 Current",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv2_current",
+    "unit": "A"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "PV2 Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv2_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "voltage",
+    "entity_category": null,
+    "name": "PV2 Voltage",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_pv2_voltage",
+    "unit": "V"
+  },
+  {
+    "device_class": "power",
+    "entity_category": "diagnostic",
+    "name": "Rated Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_rated_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "Solar Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_solar_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Battery Charge Total",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_total_battery_charge",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Battery Discharge Total",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_total_battery_discharge",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Consumption Total",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_total_consumption",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Grid Export Total",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_total_grid_export",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Grid Import Total",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_total_grid_import",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Inverter Energy Total",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_total_inverter_energy",
+    "unit": "kWh"
+  },
+  {
+    "device_class": "energy",
+    "entity_category": null,
+    "name": "Solar Total",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_total_solar",
+    "unit": "kWh"
+  },
+  {
+    "device_class": null,
+    "entity_category": "diagnostic",
+    "name": "Time of Use",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_tou_schedule",
+    "unit": null
+  },
+  {
+    "device_class": "power",
+    "entity_category": null,
+    "name": "UPS Power",
+    "platform": "sensor",
+    "unique_id": "P1196-GOLDEN_ups_power",
+    "unit": "W"
+  },
+  {
+    "device_class": "switch",
+    "entity_category": null,
+    "name": "Grid Charging",
+    "platform": "switch",
+    "unique_id": "P1196-GOLDEN_grid_charge_enabled",
+    "unit": null
+  },
+  {
+    "device_class": null,
+    "entity_category": "config",
+    "name": "Read Only",
+    "platform": "switch",
+    "unique_id": "P1196-GOLDEN_read_only",
+    "unit": null
+  },
+  {
+    "device_class": "switch",
+    "entity_category": null,
+    "name": "Solar Sell",
+    "platform": "switch",
+    "unique_id": "P1196-GOLDEN_solar_sell_enabled",
+    "unit": null
+  }
+]
