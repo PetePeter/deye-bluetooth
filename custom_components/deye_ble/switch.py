@@ -109,10 +109,3 @@ class DeyeModelSwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs) -> None:
         await self._async_set(False)
-
-
-    async def async_turn_on(self, **kwargs) -> None:
-        await self._async_set(True)
-
-    async def async_turn_off(self, **kwargs) -> None:
-        await self._async_set(False)
