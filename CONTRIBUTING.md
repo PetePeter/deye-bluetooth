@@ -39,3 +39,9 @@ The contracts check registry claims, derived read blocks, capture coverage,
 key meanings, verified writes, and clock capabilities for every discovered
 model. Each guard also has a deliberately broken model fixture to show that the
 check detects the failure.
+
+Read blocks are grouped automatically: registers in the same tier are merged
+into blocks of up to 16, so a block can include addresses no point uses. The
+three-phase hybrid accepts this. If a new model rejects such a gap address, the
+whole block fails to read. Test on hardware and look for sensors that stay
+unavailable.
