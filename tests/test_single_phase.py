@@ -211,7 +211,14 @@ class _Transport:
         self.reads.append((address, count))
         if address == r.REG_DEVICE_TYPE:
             return [DEVICE_TYPE]
-        return {**TELEMETRY, **CONFIG}[address][:count]
+        words = {
+            start + offset: value
+            for start, block in {**TELEMETRY, **CONFIG}.items()
+            for offset, value in enumerate(block)
+        }
+        if not any(address <= register < address + count for register in words):
+            raise KeyError(address)
+        return [words.get(address + offset, 0) for offset in range(count)]
 
 
 @pytest.mark.asyncio
@@ -249,7 +256,7 @@ def test_every_single_phase_control_reads_back_on_the_slow_tier():
 async def test_settings_read_failure_keeps_telemetry():
     class Flaky(_Transport):
         async def read(self, address, count):
-            if address == 200:
+            if address <= 204 < address + count:
                 raise TimeoutError
             return await super().read(address, count)
 

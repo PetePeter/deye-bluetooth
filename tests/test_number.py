@@ -1,34 +1,16 @@
-"""Number-entity tests — Discharge SOC writes the floor to all non-charge slots.
-
-Requires homeassistant (number.py imports it). The coordinator is faked so the
-test exercises the real entity setter logic without bleak or a live HA loop.
-"""
+"""Generic model-number entities use real point and write descriptors."""
 from __future__ import annotations
 
 import pytest
 
 pytest.importorskip("homeassistant")
 
-from custom_components.deye_ble import registers as r
 from custom_components.deye_ble.const import CONF_LOGGER_SN
-from custom_components.deye_ble.number import (
-    DeyeBattLowSoc,
-    DeyeBattRestartSoc,
-    DeyeBattShutdownSoc,
-    DeyeDischargeSoc,
-    DeyeGenPeakPower,
-    DeyeGridPeakPower,
-    DeyeGridChargeCurrent,
-    DeyeMaxChargeCurrent,
-    DeyeMaxDischargeCurrent,
-    DeyeMaxSellPower,
-    DeyeSmartloadMinSolarPower,
-    DeyeSmartloadOffSoc,
-    DeyeSmartloadOnSoc,
-    DeyeZeroExportPower,
-)
+from custom_components.deye_ble.models import get
+from custom_components.deye_ble.number import DeyeModelNumber
 from custom_components.deye_ble.registers import (
     DISCHARGE_SOC_REGS,
+    PROFILE_SINGLE_PHASE,
     REG_BATT_LOW_SOC,
     REG_BATT_RESTART_SOC,
     REG_BATT_SHUTDOWN_SOC,
@@ -36,43 +18,48 @@ from custom_components.deye_ble.registers import (
     REG_GRID_PEAK_POWER,
     REG_MAX_CHARGE_CURRENT,
     REG_MAX_DISCHARGE_CURRENT,
+    REG_MAX_SELL_POWER,
     REG_ZERO_EXPORT_POWER,
 )
 
 
 class FakeCoordinator:
-    def __init__(self, profile: str = r.PROFILE_THREE_PHASE):
-        self.profile = profile
-        self.register_profile = r.PROFILES[profile]
-        self.is_single_phase = profile == r.PROFILE_SINGLE_PHASE
-        self.data: dict = {}
-        self.write_calls: list[tuple[int, int]] = []
-        self.write_many_calls: list[dict[int, int]] = []
-        self.updated: dict | None = None
+    def __init__(self, profile="three_phase"):
+        self.model = get(profile)
+        self.data = {}
+        self.write_calls = []
+        self.write_many_calls = []
+        self.updated = None
         self.dirty = False
 
-    async def async_write(self, reg: int, value: int) -> None:
+    async def async_write(self, reg, value):
         self.write_calls.append((reg, value))
 
-    async def async_write_many(self, regs: dict[int, int]) -> None:
+    async def async_write_many(self, regs):
         self.write_many_calls.append(regs)
 
-    def async_set_updated_data(self, data: dict) -> None:
+    def async_set_updated_data(self, data):
         self.updated = data
+        self.data = data
 
-    def mark_config_dirty(self) -> None:
+    def mark_config_dirty(self):
         self.dirty = True
 
 
 class FakeEntry:
-    def __init__(self, sn: str):
+    def __init__(self, sn):
         self.data = {CONF_LOGGER_SN: sn}
 
 
+def _number(coordinator, key):
+    point = next(point for point in coordinator.model.points if point.key == key)
+    return DeyeModelNumber(coordinator, FakeEntry("DEYE00000001"), point)
+
+
 @pytest.mark.asyncio
-async def test_discharge_soc_writes_value_to_all_non_charge_slots():
+async def test_discharge_soc_writes_all_declared_non_charge_slots():
     coordinator = FakeCoordinator()
-    entity = DeyeDischargeSoc(coordinator, FakeEntry("DEYE00000001"), "DEYE00000001")
+    entity = _number(coordinator, "discharge_soc")
 
     await entity.async_set_native_value(25)
 
@@ -81,83 +68,44 @@ async def test_discharge_soc_writes_value_to_all_non_charge_slots():
     assert coordinator.dirty
 
 
-@pytest.mark.asyncio
-async def test_max_charge_current_writes_to_register_0x006c():
-    coordinator = FakeCoordinator()
-    entity = DeyeMaxChargeCurrent(coordinator, FakeEntry("DEYE00000001"), "DEYE00000001")
-
-    await entity.async_set_native_value(210)
-
-    assert coordinator.write_calls == [(REG_MAX_CHARGE_CURRENT, 210)]
-    assert coordinator.updated["max_charge_current"] == 210
-    assert coordinator.dirty
-
-
-@pytest.mark.asyncio
-async def test_max_discharge_current_writes_to_register_0x006d():
-    coordinator = FakeCoordinator()
-    entity = DeyeMaxDischargeCurrent(coordinator, FakeEntry("DEYE00000001"), "DEYE00000001")
-
-    await entity.async_set_native_value(200)
-
-    assert coordinator.write_calls == [(REG_MAX_DISCHARGE_CURRENT, 200)]
-    assert coordinator.updated["max_discharge_current"] == 200
-    assert coordinator.dirty
-
-
-@pytest.mark.parametrize("entity_cls,reg,data_key,value", [
-    (DeyeBattShutdownSoc, REG_BATT_SHUTDOWN_SOC, "batt_shutdown_soc", 4),
-    (DeyeBattLowSoc, REG_BATT_LOW_SOC, "batt_low_soc", 5),
-    (DeyeBattRestartSoc, REG_BATT_RESTART_SOC, "batt_restart_soc", 6),
-    # Peak-shave caps stay editable and write through on every change.
-    (DeyeGridPeakPower, REG_GRID_PEAK_POWER, "grid_peak_power", 16500),
-    (DeyeGenPeakPower, REG_GEN_PEAK_POWER, "gen_peak_power", 8000),
-    # Zero-export power is signed — a negative must pass through unchanged.
-    (DeyeZeroExportPower, REG_ZERO_EXPORT_POWER, "zero_export_power", -30),
+@pytest.mark.parametrize(("profile", "key", "reg"), [
+    ("three_phase", "max_sell_power", REG_MAX_SELL_POWER),
+    ("three_phase", "max_charge_current", REG_MAX_CHARGE_CURRENT),
+    ("three_phase", "max_discharge_current", REG_MAX_DISCHARGE_CURRENT),
+    ("three_phase", "batt_shutdown_soc", REG_BATT_SHUTDOWN_SOC),
+    ("three_phase", "batt_low_soc", REG_BATT_LOW_SOC),
+    ("three_phase", "batt_restart_soc", REG_BATT_RESTART_SOC),
+    ("three_phase", "grid_peak_power", REG_GRID_PEAK_POWER),
+    ("three_phase", "gen_peak_power", REG_GEN_PEAK_POWER),
+    (PROFILE_SINGLE_PHASE, "max_sell_power", 245),
+    (PROFILE_SINGLE_PHASE, "zero_export_power", 206),
+    (PROFILE_SINGLE_PHASE, "grid_peak_power", 293),
+    (PROFILE_SINGLE_PHASE, "gen_peak_power", 292),
+    (PROFILE_SINGLE_PHASE, "max_charge_current", 210),
+    (PROFILE_SINGLE_PHASE, "max_discharge_current", 211),
+    (PROFILE_SINGLE_PHASE, "batt_shutdown_soc", 217),
+    (PROFILE_SINGLE_PHASE, "batt_restart_soc", 218),
+    (PROFILE_SINGLE_PHASE, "batt_low_soc", 219),
+    (PROFILE_SINGLE_PHASE, "grid_charge_current", 230),
+    (PROFILE_SINGLE_PHASE, "smartload_off_soc", 237),
+    (PROFILE_SINGLE_PHASE, "smartload_on_soc", 239),
+    (PROFILE_SINGLE_PHASE, "smartload_min_solar_power", 241),
 ])
 @pytest.mark.asyncio
-async def test_single_register_number_writes_to_expected_register(
-    entity_cls, reg, data_key, value,
-):
-    coordinator = FakeCoordinator()
-    entity = entity_cls(coordinator, FakeEntry("DEYE00000001"), "DEYE00000001")
+async def test_model_number_writes_its_declared_register(profile, key, reg):
+    coordinator = FakeCoordinator(profile)
+    entity = _number(coordinator, key)
 
-    await entity.async_set_native_value(value)
-
-    assert coordinator.write_calls == [(reg, value)]
-    assert coordinator.updated[data_key] == value
-    assert coordinator.dirty
-
-
-def test_zero_export_power_allows_negative_range():
-    # The phone app blocks negatives; the entity must expose the signed range
-    # (live-probed: -15000..100) so a grid-import/feed-in bias can be set from HA.
-    entity = DeyeZeroExportPower(FakeCoordinator(), FakeEntry("DEYE00000001"), "DEYE00000001")
-    assert entity.native_min_value == -15000
-    assert entity._attr_native_max_value == 100
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("cls,reg", [
-    (DeyeMaxSellPower, 245),
-    (DeyeZeroExportPower, 206),
-    (DeyeBattShutdownSoc, 217),
-    (DeyeMaxChargeCurrent, 210),
-    (DeyeGridChargeCurrent, 230),
-    (DeyeGridPeakPower, 293),
-    (DeyeSmartloadOffSoc, 237),
-    (DeyeSmartloadOnSoc, 239),
-    (DeyeSmartloadMinSolarPower, 241),
-])
-async def test_single_phase_number_writes_the_single_phase_register(cls, reg):
-    # Same entity, other map: a single-phase write must never land on the
-    # three-phase address (0x006C is daily PV there).
-    coordinator = FakeCoordinator(r.PROFILE_SINGLE_PHASE)
-    entity = cls(coordinator, FakeEntry("SN"), "SN")
     await entity.async_set_native_value(50)
+
     assert coordinator.write_calls == [(reg, 50)]
+    assert coordinator.updated[key] == 50
+    assert coordinator.dirty
 
 
-def test_single_phase_zero_export_floor_is_zero():
-    entity = DeyeZeroExportPower(FakeCoordinator(r.PROFILE_SINGLE_PHASE), FakeEntry("SN"), "SN")
-    assert entity.native_min_value == 0
+def test_zero_export_range_comes_from_the_model_point():
+    three_phase = _number(FakeCoordinator(), "zero_export_power")
+    single_phase = _number(FakeCoordinator(PROFILE_SINGLE_PHASE), "zero_export_power")
+
+    assert (three_phase.native_min_value, three_phase.native_max_value) == (-15000, 100)
+    assert (single_phase.native_min_value, single_phase.native_max_value) == (0, 100)

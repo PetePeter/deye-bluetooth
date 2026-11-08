@@ -1,9 +1,12 @@
 """Register maps and decoders grouped by inverter model."""
 from __future__ import annotations
 
+from importlib import import_module
+from pkgutil import iter_modules
 from dataclasses import dataclass
 from typing import Callable
 
+from .base import Model, ModelRegistry
 from .single_phase_lp1 import *
 from .string_g05 import *
 from .three_phase_hybrid import *
@@ -25,11 +28,7 @@ DEVICE_TYPES_STRING = frozenset((0x0002, 0x0200))
 
 def profile_from_device_type(raw: int) -> str:
     """Map the register-0 device type to a decode profile."""
-    if raw == DEVICE_TYPE_SINGLE_PHASE:
-        return PROFILE_SINGLE_PHASE
-    if raw in DEVICE_TYPES_STRING:
-        return PROFILE_STRING
-    return PROFILE_THREE_PHASE
+    return for_device_type(raw).id
 
 
 TIER_LIVE = "live"
@@ -55,71 +54,6 @@ class RegisterProfile:
     time_sync_reg: int | None
 
 
-PROFILES: dict[str, RegisterProfile] = {
-    PROFILE_THREE_PHASE: RegisterProfile(
-        live=LIVE_BLOCKS,
-        fast=FAST_BLOCKS,
-        slow=SLOW_BLOCKS,
-        decode=decode,
-        controls={
-            "work_mode": REG_WORK_MODE,
-            "max_sell_power": REG_MAX_SELL_POWER,
-            "zero_export_power": REG_ZERO_EXPORT_POWER,
-            "charge_soc": REG_CHARGE_SOC,
-            "max_charge_current": REG_MAX_CHARGE_CURRENT,
-            "max_discharge_current": REG_MAX_DISCHARGE_CURRENT,
-            "batt_shutdown_soc": REG_BATT_SHUTDOWN_SOC,
-            "batt_restart_soc": REG_BATT_RESTART_SOC,
-            "batt_low_soc": REG_BATT_LOW_SOC,
-            "grid_peak_power": REG_GRID_PEAK_POWER,
-            "gen_peak_power": REG_GEN_PEAK_POWER,
-        },
-        clock_reg=REG_CLOCK,
-        clock_writable=True,
-        time_sync_reg=REG_TIME_SYNC,
-    ),
-    PROFILE_SINGLE_PHASE: RegisterProfile(
-        live=SP_LIVE_BLOCKS,
-        fast=SP_FAST_BLOCKS,
-        slow=SP_SLOW_BLOCKS,
-        decode=decode_single_phase,
-        controls={
-            "zero_export_power": 206,
-            "max_charge_current": 210,
-            "max_discharge_current": 211,
-            "batt_shutdown_soc": 217,
-            "batt_restart_soc": 218,
-            "batt_low_soc": 219,
-            "grid_charge_current": 230,
-            "grid_charge_enabled": 232,
-            "io_mode": 235,
-            "smartload_off_soc": 237,
-            "smartload_on_soc": 239,
-            "smartload_min_solar_power": 241,
-            "energy_pattern": 243,
-            "work_mode": 244,
-            "max_sell_power": 245,
-            "solar_sell_enabled": 247,
-            "gen_peak_power": 292,
-            "grid_peak_power": 293,
-        },
-        clock_reg=SP_REG_CLOCK,
-        clock_writable=True,
-        time_sync_reg=None,
-    ),
-    PROFILE_STRING: RegisterProfile(
-        live=STR_LIVE_BLOCKS,
-        fast=STR_FAST_BLOCKS,
-        slow=STR_SLOW_BLOCKS,
-        decode=decode_string,
-        controls={},
-        clock_reg=STR_REG_CLOCK,
-        clock_writable=False,
-        time_sync_reg=None,
-    ),
-}
-
-
 def tier_blocks(profile: RegisterProfile, tiers) -> list[tuple[tuple[int, int], bool]]:
     """Return ``(block, fatal)`` pairs in LIVE, FAST, SLOW order."""
     out = []
@@ -143,3 +77,62 @@ __all__ = list(dict.fromkeys([
     "ALL_TIERS", "SP_IO_MODE_IDS", "SP_ENERGY_PATTERN_IDS", "RegisterProfile",
     "PROFILES", "tier_blocks",
 ]))
+
+
+def _discover_models() -> tuple[Model, ...]:
+    discovered = []
+    for module_info in iter_modules(__path__):
+        if module_info.name == "base" or module_info.ispkg:
+            continue
+        module = import_module(f"{__name__}.{module_info.name}")
+        model = getattr(module, "MODEL", None)
+        if model is not None:
+            discovered.append(model)
+    # Preserve the existing Options order, with the fallback model first.
+    return tuple(sorted(discovered, key=lambda model: (model.id != PROFILE_THREE_PHASE, model.id)))
+
+
+MODELS = _discover_models()
+REGISTRY = ModelRegistry(MODELS, fallback_id=PROFILE_THREE_PHASE)
+
+
+def _profile_for_model(model: Model) -> RegisterProfile:
+    blocks = model.read_blocks()
+    points = {point.key: point for point in model.points}
+    clock = points.get("inverter_clock")
+    if clock is None or clock.read is None:
+        raise ValueError(f"model {model.id!r} must declare its inverter clock read")
+    sync = points.get("time_sync")
+    return RegisterProfile(
+        live=blocks[TIER_LIVE],
+        fast=blocks[TIER_FAST],
+        slow=blocks[TIER_SLOW],
+        decode=model.decode,
+        controls=model.controls,
+        clock_reg=clock.read.registers[0],
+        clock_writable=model.capabilities.clock_writable,
+        time_sync_reg=(sync.read.registers[0] if sync is not None and sync.read else None),
+    )
+
+
+PROFILES: dict[str, RegisterProfile] = {
+    model.id: _profile_for_model(model) for model in MODELS
+}
+
+
+def get(model_id: str) -> Model:
+    """Return a registered model by its persisted config-entry id."""
+    return REGISTRY.get(model_id)
+
+
+def for_device_type(raw: int) -> Model:
+    """Find a model from register 0, defaulting to the three-phase model."""
+    return REGISTRY.for_device_type(raw)
+
+
+def choices() -> list[tuple[str, str]]:
+    """Dropdown choices as ``(persisted_model_id, display_name)`` pairs."""
+    return REGISTRY.choices()
+
+
+__all__ += ["Model", "ModelRegistry", "MODELS", "REGISTRY", "get", "for_device_type", "choices"]

@@ -11,6 +11,7 @@ from datetime import date, datetime
 from typing import Any, Mapping, Protocol
 
 from . import registers as r
+from .models.base import Point, Select
 from .const import (
     CONF_CONNECTION_MODE,
     CONF_LIVE_INTERVAL,
@@ -65,18 +66,21 @@ async def async_read_tiers(
     """
     await transport.handshake()
 
+    model = r.get(profile)
+    blocks = model.read_blocks(tiers)
     words_by_reg: dict[int, list[int]] = {}
     slow_complete = True
-    for (start, count), fatal in r.tier_blocks(r.PROFILES[profile], tiers):
-        try:
-            words_by_reg[start] = await transport.read(start, count)
-        except Exception as e:  # noqa: BLE001 — slow read is best-effort
-            if fatal:
-                raise
-            slow_complete = False
-            _LOGGER.debug("slow block 0x%04X read failed (non-fatal): %s", start, e)
+    for tier in (r.TIER_LIVE, r.TIER_FAST, r.TIER_SLOW):
+        for start, count in blocks[tier]:
+            try:
+                words_by_reg[start] = await transport.read(start, count)
+            except Exception as e:  # noqa: BLE001 — slow read is best-effort
+                if tier != r.TIER_SLOW:
+                    raise
+                slow_complete = False
+                _LOGGER.debug("slow block 0x%04X read failed (non-fatal): %s", start, e)
 
-    return r.PROFILES[profile].decode(words_by_reg), slow_complete
+    return model.decode(words_by_reg), slow_complete
 
 
 async def async_poll(transport: Transport, **kwargs) -> dict[str, Any]:
@@ -269,33 +273,18 @@ def validate_logger_sn(sn: str) -> str:
 
 # --- Control register ↔ entity key mapping --------------------------------
 
-# Register -> entity key for every writable control register. The five
-# non-charge TOU slots all map to "discharge_soc" so reassert can re-apply the
-# floor if the cloud/app drifts any of them.
-_REG_TO_KEY: dict[int, str] = {
-    r.REG_WORK_MODE: "work_mode",
-    r.REG_MAX_SELL_POWER: "max_sell_power",
-    r.REG_ZERO_EXPORT_POWER: "zero_export_power",
-    r.REG_TOU_SLOT2_START: "charge_start",
-    r.REG_TOU_SLOT3_START: "charge_end",
-    r.REG_CHARGE_SOC: "charge_soc",
-    **{reg: "discharge_soc" for reg in r.DISCHARGE_SOC_REGS},
-}
-# Reverse map for the single-register controls (discharge_soc spans many slots
-# and is written explicitly, so it is intentionally not reversible here).
-_KEY_TO_REG: dict[str, int] = {
-    v: k for k, v in _REG_TO_KEY.items() if v != "discharge_soc"
-}
-
-
 def register_to_key(reg: int) -> str | None:
     """Map a control register address to its entity key, or None."""
-    return _REG_TO_KEY.get(reg)
+    return next((
+        point.key
+        for point in r.get(r.PROFILE_THREE_PHASE).points
+        if point.write is not None and reg in point.write.registers
+    ), None)
 
 
 def key_to_register(key: str) -> int | None:
     """Map an entity key to its control register address, or None."""
-    return _KEY_TO_REG.get(key)
+    return r.get(r.PROFILE_THREE_PHASE).controls.get(key)
 
 
 # --- Read-back verification ------------------------------------------------
@@ -322,40 +311,49 @@ def verify_readback(reg: int, expected: int, actual: int) -> None:
 
 # --- Drift detection (for local-wins reassert) ----------------------------
 
-# Enum controls: tracked as the raw register int, decoded as a label.
-_ENUM_LABELS: dict[str, dict[int, str]] = {
-    "work_mode": r.WORK_MODE_LABELS,
-    "energy_pattern": r.SP_ENERGY_PATTERNS,
-    "io_mode": r.SP_IO_MODES,
-}
-
-
 def detect_drift(
     tracked: dict[int, int | str],
     current: dict[str, float | int | str],
-    reg_to_key: Mapping[int, str] | None = None,
+    reg_to_key: Mapping[int, str | Point] | None = None,
 ) -> list[tuple[int, int | str]]:
     """Compare last HA-set register values against current device values.
 
     Tracked values are the raw ints passed to ``async_write``.  For comparison,
     enum ints (work mode etc.) are converted to their decoded string label.
-    Other registers stay as ints. *reg_to_key* maps the profile's control
-    registers to data keys; the default is the three-phase map.
+    Other registers stay as ints. *reg_to_key* maps registers to their model
+    points or data keys; the default is the three-phase model's writable points.
 
     Returns a list of ``(register, raw_tracked_value)`` pairs that have drifted.
     Registers not in the control set are ignored.  Missing keys in *current*
     are silently skipped (can't compare what isn't reported).
     """
     drifted: list[tuple[int, int | str]] = []
+    default_points = r.get(r.PROFILE_THREE_PHASE).reassert_points
     for reg, expected in tracked.items():
-        key = (reg_to_key or _REG_TO_KEY).get(reg)
-        if key is None:
+        descriptor = (
+            reg_to_key.get(reg) if reg_to_key is not None else default_points.get(reg)
+        )
+        if descriptor is None:
             continue
+        key = descriptor if isinstance(descriptor, str) else descriptor.key
         if key not in current:
             continue
         compare_val = expected
-        if key in _ENUM_LABELS and isinstance(expected, int):
-            compare_val = _ENUM_LABELS[key].get(expected, f"Unknown ({expected})")
+        if isinstance(descriptor, Point):
+            options = next((
+                show.options for show in descriptor.shows if isinstance(show, Select)
+            ), None)
+        else:
+            options = next((
+                show.options
+                for model in r.MODELS
+                for point in model.points
+                if point.key == key
+                for show in point.shows
+                if isinstance(show, Select)
+            ), None)
+        if options is not None and isinstance(expected, int):
+            compare_val = options.get(expected, f"Unknown ({expected})")
         if current[key] != compare_val:
             drifted.append((reg, expected))
     return drifted

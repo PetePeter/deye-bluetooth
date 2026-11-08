@@ -350,13 +350,22 @@ class FakeInverter:
     async def read(self, address: int, count: int) -> list[int]:
         await self._io()
         self.ops.append(("read", address, count))
-        if address == self._fail_read_reg:
+        if self._fail_read_reg is not None and address <= self._fail_read_reg < address + count:
             raise RuntimeError(f"BLE read of 0x{address:04X} failed")
-        if address == r.REG_TIME_SYNC:
-            return [self.flags]
-        if address == r.REG_CLOCK:
-            return self._read_clock()
-        return p.parse_read(self._frames[address])
+        words = {
+            start + offset: value
+            for start, frame in self._frames.items()
+            for offset, value in enumerate(p.parse_read(frame))
+        }
+        values = [words.get(address + offset, 0) for offset in range(count)]
+        if address <= r.REG_TIME_SYNC < address + count:
+            values[r.REG_TIME_SYNC - address] = self.flags
+        if address <= r.REG_CLOCK < address + count:
+            clock = self._read_clock()
+            for offset, value in enumerate(clock):
+                if r.REG_CLOCK + offset < address + count:
+                    values[r.REG_CLOCK + offset - address] = value
+        return values
 
     # -- the logger's response cache -----------------------------------------
 

@@ -1,9 +1,10 @@
-"""Select entities — connection mode and the enum settings (work mode etc.)."""
+"""Select entities built from model points plus the connection-mode option."""
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -15,27 +16,17 @@ from .const import (
     DOMAIN,
 )
 from .entity import OptionEntity, device_info
-from .registers import SP_ENERGY_PATTERNS, SP_IO_MODES, WORK_MODE_LABELS
-
-# (data key, name, icon, value -> label). Created only where the profile maps
-# the key to a register (registers.PROFILES[...].controls).
-ENUM_SELECTS: list[tuple[str, str, str, dict[int, str]]] = [
-    ("work_mode", "Work Mode", "mdi:solar-power-variant", WORK_MODE_LABELS),
-    ("energy_pattern", "Energy Pattern", "mdi:cog", SP_ENERGY_PATTERNS),
-    ("io_mode", "GEN Port Mode", "mdi:engine", SP_IO_MODES),
-]
+from .models.base import Select as SelectDescription
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    sn = entry.data[CONF_LOGGER_SN]
-    controls = coordinator.register_profile.controls
     entities: list[SelectEntity] = [DeyeConnectionModeSelect(coordinator, entry)]
-    entities += [
-        DeyeEnumSelect(coordinator, sn, *row) for row in ENUM_SELECTS if row[0] in controls
-    ]
+    for point in coordinator.model.write_points:
+        if any(isinstance(show, SelectDescription) for show in point.shows):
+            entities.append(DeyeModelSelect(coordinator, entry, point))
     async_add_entities(entities)
 
 
@@ -55,30 +46,45 @@ class DeyeConnectionModeSelect(OptionEntity, SelectEntity):
         await self.async_set_option(mode)
 
 
-class DeyeEnumSelect(CoordinatorEntity, SelectEntity):
-    """An enum holding register, written through the read-only lock."""
+class DeyeModelSelect(CoordinatorEntity, SelectEntity):
+    """An enum setting described by a model point and verified write."""
 
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, sn: str, key: str, name: str, icon: str,
-                 labels: dict[int, str]):
+    def __init__(self, coordinator, entry: ConfigEntry, point):
         super().__init__(coordinator)
-        self._key = key
-        self._ids = {label: value for value, label in labels.items()}
-        self._attr_name = name
-        self._attr_icon = icon
-        self._attr_options = list(labels.values())
-        self._attr_unique_id = f"{sn}_{key}"
-        self._attr_device_info = device_info(sn)
+        description = next(
+            show for show in point.shows if isinstance(show, SelectDescription)
+        )
+        if point.write is None:
+            raise ValueError(f"select point {point.key!r} has no write descriptor")
+        self._key = point.key
+        self._labels = description.options
+        self._write = point.write
+        self._attr_name = description.name
+        self._attr_icon = description.icon
+        self._attr_options = list(description.options.values())
+        self._attr_unique_id = f"{entry.data[CONF_LOGGER_SN]}_{point.key}"
+        self._attr_device_info = device_info(entry.data[CONF_LOGGER_SN])
 
     @property
     def current_option(self) -> str | None:
         return (self.coordinator.data or {}).get(self._key)
 
     async def async_select_option(self, option: str) -> None:
-        reg = self.coordinator.register_profile.controls[self._key]
-        await self.coordinator.async_write(reg, self._ids[option])
+        if option not in self._labels.values():
+            raise HomeAssistantError(f"Unsupported option for {self._key}: {option}")
+        current = self.coordinator.data or {}
+        writes = self._write.values(option, current)
+        if len(writes) == 1:
+            register, raw_value = next(iter(writes.items()))
+            await self.coordinator.async_write(register, raw_value)
+        else:
+            await self.coordinator.async_write_many(writes)
+        decoded = self.coordinator.model.decode(
+            {register: [raw_value] for register, raw_value in writes.items()},
+        )
         self.coordinator.async_set_updated_data(
-            {**(self.coordinator.data or {}), self._key: option},
+            {**current, **decoded, self._key: option},
         )
         self.coordinator.mark_config_dirty()

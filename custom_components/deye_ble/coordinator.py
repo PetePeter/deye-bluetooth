@@ -158,7 +158,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             raise HomeAssistantError(READ_ONLY_ERROR)
 
     def _refuse_if_clock_not_writable(self) -> None:
-        if not self.register_profile.clock_writable:
+        if not self.model.capabilities.clock_writable:
             raise HomeAssistantError("Clock sync is not supported for this inverter profile")
 
     @property
@@ -295,16 +295,13 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
 
     @property
     def profile(self) -> str:
-        """Register map in use (see registers.PROFILES)."""
+        """Persisted model id in use."""
         return self._profile
 
     @property
-    def is_single_phase(self) -> bool:
-        return self._profile == r.PROFILE_SINGLE_PHASE
-
-    @property
-    def is_string(self) -> bool:
-        return self._profile == r.PROFILE_STRING
+    def model(self) -> r.Model:
+        """Registered descriptor set for the current inverter."""
+        return r.get(self._profile)
 
     @property
     def register_profile(self) -> r.RegisterProfile:
@@ -418,9 +415,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # Reassert: if enabled, detect drift and re-apply drifted values once.
         if self._reassert and self._tracked_values:
             drifted = detect_drift(
-                self._tracked_values, data,
-                {reg: key for key, reg in self.register_profile.controls.items()}
-                if self._profile != r.PROFILE_THREE_PHASE else None,
+                self._tracked_values, data, self.model.reassert_points,
             )
             if drifted:
                 _LOGGER.info("reassert: correcting %d drifted register(s)", len(drifted))

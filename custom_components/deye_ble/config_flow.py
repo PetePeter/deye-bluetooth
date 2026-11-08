@@ -238,9 +238,10 @@ class DeyeBleOptionsFlowHandler(config_entries.OptionsFlow):
                 CONF_PROFILE, default=entry.data.get(CONF_PROFILE, PROFILE_AUTO)
             ): SelectSelector(SelectSelectorConfig(options=[
                 SelectOptionDict(value=PROFILE_AUTO, label="Auto-detect"),
-                SelectOptionDict(value=r.PROFILE_THREE_PHASE, label="Three-phase"),
-                SelectOptionDict(value=r.PROFILE_SINGLE_PHASE, label="Single-phase"),
-                SelectOptionDict(value=r.PROFILE_STRING, label="String (on-grid)"),
+                *(
+                    SelectOptionDict(value=model_id, label=name)
+                    for model_id, name in r.choices()
+                ),
             ])),
         })
         return self.async_show_form(step_id="init", data_schema=schema)

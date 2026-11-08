@@ -16,7 +16,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    if coordinator.register_profile.clock_writable:
+    if coordinator.model.capabilities.clock_writable:
         async_add_entities([DeyeSyncClockButton(coordinator, entry)])
 
 
