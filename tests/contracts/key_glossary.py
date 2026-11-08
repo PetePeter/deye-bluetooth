@@ -1,0 +1,178 @@
+"""Human meanings for model data keys, including profile-specific semantics."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class KeyMeaning:
+    description: str
+    registers: tuple[int, ...] | None = None
+
+
+KEY_MEANINGS = {
+    "alarm": "Named active inverter alarm bits.",
+    "alarm_code": "Raw inverter alarm bitfield value.",
+    "batt_low_soc": "Battery low-warning state-of-charge threshold.",
+    "batt_low_voltage": "Battery low-voltage threshold.",
+    "batt_restart_soc": "Battery restart state-of-charge threshold.",
+    "batt_restart_voltage": "Battery restart-voltage threshold.",
+    "batt_shutdown_soc": "Battery shutdown state-of-charge threshold.",
+    "batt_shutdown_voltage": "Battery shutdown-voltage threshold.",
+    "battery_absorption_voltage": "Battery absorption-charge voltage target.",
+    "battery_capacity": "Configured battery capacity in amp-hours.",
+    "battery_current": "Battery charge or discharge current.",
+    "battery_empty_voltage": "Configured battery empty-voltage threshold.",
+    "battery_float_voltage": "Battery float-charge voltage target.",
+    "battery_mode": "Configured battery operating mode.",
+    "battery_power": "Instantaneous battery charge or discharge power.",
+    "battery_soc": "Battery state of charge as a percentage.",
+    "battery_temp": "Measured battery temperature.",
+    "battery_voltage": "Measured battery terminal voltage.",
+    "bms_alarm_code": "Raw battery-management-system alarm bitfield value.",
+    "bms_charge_current_limit": "Charge-current limit reported by the BMS.",
+    "bms_charge_voltage": "Maximum charge voltage reported by the BMS.",
+    "bms_current": "Battery current reported by the BMS.",
+    "bms_discharge_current_limit": "Discharge-current limit reported by the BMS.",
+    "bms_discharge_voltage": "Minimum discharge voltage reported by the BMS.",
+    "bms_fault_code": "Raw battery-management-system fault bitfield value.",
+    "bms_problem": "Whether a BMS alarm or fault is active.",
+    "bms_protocol": "Configured battery communication protocol.",
+    "bms_soc": "Battery state of charge reported by the BMS.",
+    "bms_temp": "Battery temperature reported by the BMS.",
+    "bms_voltage": "Battery voltage reported by the BMS.",
+    "charge_end": "End time of the grid-charge window.",
+    "charge_soc": "Target state of charge for the grid-charge window.",
+    "charge_start": "Start time of the grid-charge window.",
+    "daily_battery_charge": "Battery energy charged since local midnight.",
+    "daily_battery_discharge": "Battery energy discharged since local midnight.",
+    "daily_gen": "Generator energy produced today.",
+    "daily_grid_export": "Grid energy exported today.",
+    "daily_grid_import": "Grid energy imported today.",
+    "daily_inverter_energy": "Net inverter energy for the current day.",
+    "daily_load": "Energy consumed by the load today.",
+    "daily_solar": "Solar energy produced today.",
+    "device_state": "Decoded inverter operating-state label.",
+    "discharge_soc": "Minimum state-of-charge floor for discharge periods.",
+    "energy_pattern": "Configured battery energy-use strategy.",
+    "external_ct_current": "Current measured by the external current transformer.",
+    "external_ct_power": "Power measured by the external current transformer.",
+    "fault": "Named active inverter fault bits.",
+    "fault_code": "Raw inverter fault bitfield value.",
+    "firmware_comms": "Communications-board firmware version.",
+    "firmware_control": "Control-board firmware version.",
+    "gen_charge_current": "Configured generator battery-charge current.",
+    "gen_charge_enabled": "Whether generator charging is active.",
+    "gen_charge_start_soc": "Battery state-of-charge threshold for generator charging.",
+    "gen_frequency": "Generator AC frequency.",
+    "gen_peak_power": "Generator peak-shaving power limit.",
+    "gen_peak_shaving": "Whether generator peak shaving is enabled.",
+    "gen_power": "Instantaneous generator output power.",
+    "gen_voltage": "Generator AC voltage.",
+    "grid_charge_current": "Configured grid battery-charge current.",
+    "grid_charge_enabled": "Whether grid charging is enabled.",
+    "grid_charge_start_soc": "Battery state-of-charge threshold for grid charging.",
+    "grid_connected": "Whether the inverter reports a connected grid supply.",
+    "grid_current": "Instantaneous grid current.",
+    "grid_current_l1": "Grid current on phase L1.",
+    "grid_current_l2": "Grid current on phase L2.",
+    "grid_current_l3": "Grid current on phase L3.",
+    "grid_frequency": "Measured grid AC frequency.",
+    "grid_frequency_high_limit": "Configured upper grid-frequency protection limit.",
+    "grid_frequency_low_limit": "Configured lower grid-frequency protection limit.",
+    "grid_inverter_side_power": "Grid power measured at the inverter connection.",
+    "grid_line_voltage_l1_l2": "Line-to-line grid voltage between L1 and L2.",
+    "grid_line_voltage_l2_l3": "Line-to-line grid voltage between L2 and L3.",
+    "grid_line_voltage_l3_l1": "Line-to-line grid voltage between L3 and L1.",
+    "grid_peak_power": "Grid peak-shaving power limit.",
+    "grid_peak_shaving": "Whether grid peak shaving is enabled.",
+    "grid_power": "Instantaneous active power exchanged with the grid.",
+    "grid_reconnect_time": "Delay before reconnecting after grid recovery.",
+    "grid_voltage": "Grid AC voltage at the inverter connection.",
+    "grid_voltage_high_limit": "Configured upper grid-voltage protection limit.",
+    "grid_voltage_l1": "Grid voltage on phase L1.",
+    "grid_voltage_l2": "Grid voltage on phase L2.",
+    "grid_voltage_l3": "Grid voltage on phase L3.",
+    "grid_voltage_low_limit": "Configured lower grid-voltage protection limit.",
+    "house_load": "Instantaneous active power used by household loads.",
+    "inverter_ac_temp": "Temperature measured on the inverter AC side.",
+    "inverter_clock": "Date and time currently held by the inverter real-time clock.",
+    "inverter_output_current": "Inverter AC output current.",
+    "inverter_output_frequency": "Inverter AC output frequency.",
+    "inverter_output_power": "Inverter AC active output power.",
+    "inverter_output_voltage": "Inverter AC output voltage.",
+    "inverter_power_l1": "Inverter active output power on phase L1.",
+    "inverter_power_l2": "Inverter active output power on phase L2.",
+    "inverter_power_l3": "Inverter active output power on phase L3.",
+    "inverter_problem": "Whether an inverter alarm or fault is active.",
+    "inverter_serial": "Inverter serial number reported by the device.",
+    "inverter_temp": "Inverter thermal sensor value; profile-specific side is pinned below.",
+    "io_mode": "Configured generator or smart-load I/O mode.",
+    "load_frequency": "AC frequency measured at the backed-up load output.",
+    "load_voltage": "AC voltage measured at the backed-up load output.",
+    "max_charge_current": "Maximum battery charge current setting.",
+    "max_discharge_current": "Maximum battery discharge current setting.",
+    "max_sell_power": "Upper limit on power exported to the grid.",
+    "mppt_count": "Number of maximum-power-point tracker inputs reported.",
+    "output_apparent_power": "Inverter apparent AC output power.",
+    "output_reactive_power": "Inverter reactive AC output power.",
+    "peak_shaving_flags_raw": "Raw shared control word backing the peak-shaving switches.",
+    "phase_count": "Number of AC phases reported by the inverter.",
+    "protocol_version": "Modbus protocol version reported by the inverter.",
+    "pv1_current": "DC current from PV string 1.",
+    "pv1_power": "PV string 1 power, derived from its DC voltage and current.",
+    "pv1_voltage": "DC voltage from PV string 1.",
+    "pv2_current": "DC current from PV string 2.",
+    "pv2_power": "PV string 2 power, derived from its DC voltage and current.",
+    "pv2_voltage": "DC voltage from PV string 2.",
+    "pv_input_power": "Combined DC power entering the inverter from PV strings.",
+    "rated_power": "Inverter rated output power.",
+    "smartload_min_solar_power": "Minimum solar power required to enable the smart load.",
+    "smartload_off_soc": "Battery state-of-charge threshold for turning the smart load off.",
+    "smartload_on_soc": "Battery state-of-charge threshold for turning the smart load on.",
+    "solar_power": "Instantaneous solar generation power.",
+    "solar_sell_enabled": "Whether solar export to the grid is enabled.",
+    "time_sync": "RTC synchronization flag used to commit staged clock registers.",
+    "total_battery_charge": "Lifetime cumulative battery charging energy.",
+    "total_battery_discharge": "Lifetime cumulative battery discharging energy.",
+    "total_consumption": "Lifetime cumulative energy consumed by loads.",
+    "total_grid_export": "Lifetime cumulative energy exported to the grid.",
+    "total_grid_import": "Lifetime cumulative energy imported from the grid.",
+    "total_inverter_energy": "Lifetime net energy produced by the inverter.",
+    "total_solar": "Lifetime cumulative solar generation energy.",
+    "tou_days": "Weekdays enabled for the time-of-use schedule.",
+    "tou_enabled": "Whether the time-of-use schedule is enabled.",
+    "tou_slots": "Configured time-of-use periods and their charge targets.",
+    "ups_power": "Instantaneous power supplied through the backup output.",
+    "work_mode": "Configured inverter operating mode.",
+    "zero_export_power": "Grid-compensation power setting used to limit export.",
+}
+
+
+MODEL_KEY_MEANINGS = {
+    ("three_phase", "inverter_temp"): KeyMeaning(
+        "Inverter internal temperature from the hybrid model's thermal sensor."
+    ),
+    ("single_phase", "inverter_temp"): KeyMeaning(
+        "PV/DC-side inverter temperature at register 90, distinct from AC register 91.",
+        registers=(90,),
+    ),
+    ("single_phase", "inverter_ac_temp"): KeyMeaning(
+        "AC-side inverter temperature at register 91.", registers=(91,)
+    ),
+    ("string", "inverter_temp"): KeyMeaning(
+        "PV/DC-side inverter temperature at register 90, distinct from AC register 91.",
+        registers=(90,),
+    ),
+    ("string", "inverter_ac_temp"): KeyMeaning(
+        "AC-side inverter temperature at register 91.", registers=(91,)
+    ),
+}
+
+
+def meaning_for(model_id: str, key: str) -> KeyMeaning | None:
+    """Return the model-specific meaning, falling back to shared semantics."""
+    if (model_id, key) in MODEL_KEY_MEANINGS:
+        return MODEL_KEY_MEANINGS[(model_id, key)]
+    description = KEY_MEANINGS.get(key)
+    return KeyMeaning(description) if description else None

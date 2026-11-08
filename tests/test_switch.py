@@ -10,7 +10,7 @@ from homeassistant.exceptions import HomeAssistantError
 from custom_components.deye_ble.const import CONF_LOGGER_SN
 from custom_components.deye_ble.models import get
 from custom_components.deye_ble.switch import DeyeModelSwitch
-from custom_components.deye_ble.registers import REG_PEAK_SHAVING_FLAGS
+from custom_components.deye_ble.models import REG_PEAK_SHAVING_FLAGS
 
 
 class FakeCoordinator:

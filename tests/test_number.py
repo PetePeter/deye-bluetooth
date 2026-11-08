@@ -8,7 +8,7 @@ pytest.importorskip("homeassistant")
 from custom_components.deye_ble.const import CONF_LOGGER_SN
 from custom_components.deye_ble.models import get
 from custom_components.deye_ble.number import DeyeModelNumber
-from custom_components.deye_ble.registers import (
+from custom_components.deye_ble.models import (
     DISCHARGE_SOC_REGS,
     PROFILE_SINGLE_PHASE,
     REG_BATT_LOW_SOC,

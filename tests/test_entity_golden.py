@@ -11,7 +11,7 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
-from custom_components.deye_ble import PLATFORMS, const, protocol, registers
+from custom_components.deye_ble import PLATFORMS, const, models, protocol
 from custom_components.deye_ble.coordinator import DeyeBleCoordinator
 from custom_components.deye_ble.transport import DeyeBleTransport
 from tests.test_registers import FRAMES
@@ -33,17 +33,17 @@ def _three_phase_data() -> dict:
         address: protocol.parse_read(frame)
         for address, frame in FRAMES.items()
     }
-    return registers.decode(words)
+    return models.decode(words)
 
 
 def _single_phase_data() -> dict:
     words = {**SINGLE_PHASE_TELEMETRY, **SINGLE_PHASE_CONFIG}
-    return registers.decode_single_phase(words)
+    return models.decode_single_phase(words)
 
 
 def _string_data() -> dict:
     words = {**STRING_TELEMETRY, **STRING_CONFIG}
-    return registers.decode_string(words)
+    return models.decode_string(words)
 
 
 def _metadata_value(value):
@@ -103,9 +103,9 @@ async def _snapshot(profile: str, decoded_data: dict) -> list[dict]:
 @pytest.mark.parametrize(
     ("profile_name", "profile", "decode"),
     [
-        ("three_phase", registers.PROFILE_THREE_PHASE, _three_phase_data),
-        ("single_phase", registers.PROFILE_SINGLE_PHASE, _single_phase_data),
-        ("string", registers.PROFILE_STRING, _string_data),
+        ("three_phase", models.PROFILE_THREE_PHASE, _three_phase_data),
+        ("single_phase", models.PROFILE_SINGLE_PHASE, _single_phase_data),
+        ("string", models.PROFILE_STRING, _string_data),
     ],
     ids=("three_phase", "single_phase", "string"),
 )

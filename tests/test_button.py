@@ -17,7 +17,7 @@ pytest.importorskip("homeassistant")
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.deye_ble import const
-from custom_components.deye_ble import registers as r
+from custom_components.deye_ble import models as r
 from custom_components.deye_ble.button import DeyeSyncClockButton, async_setup_entry
 from tests.test_clock_coordinator import (
     NOW,

@@ -33,6 +33,11 @@ graph LR
 > connection — the phone Deye app and this HA integration cannot both connect
 > simultaneously. Close the Deye phone app before using the BLE integration.
 
+Model-specific register maps, decoded points, and verified controls live under
+`custom_components/deye_ble/models/`. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md#add-a-model) for the add-a-model guide and
+the cross-model contracts.
+
 ## Running alongside the cloud bridge
 
 This integration is designed to run **in parallel** with

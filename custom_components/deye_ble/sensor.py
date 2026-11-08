@@ -1,7 +1,7 @@
 """Sensor entities mirroring the ha-deyecloud-bridge sensor set.
 
 All telemetry sensors are thin CoordinatorEntity wrappers — logic lives in
-registers.decode (P2) and helpers.daily_calc (P4). No non-trivial logic here.
+models.decode (P2) and helpers.daily_calc (P4). No non-trivial logic here.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from .const import CONF_LOGGER_SN, DOMAIN, SYNC_RESULTS
 from .entity import device_info
 from .helpers import daily_calc
 from .models.base import Sensor as SensorDescription
-from .registers import active_tou_slot
+from .models import active_tou_slot
 
 
 async def async_setup_entry(

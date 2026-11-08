@@ -53,7 +53,7 @@ async def async_setup_entry(hass, entry) -> bool:
     if (migrated := migrate_options(entry.options)) is not None:
         hass.config_entries.async_update_entry(entry, options=migrated)
 
-    from . import registers as r
+    from . import models as r
 
     coordinator = DeyeBleCoordinator(
         hass, address=address, transport_factory=_make_transport,

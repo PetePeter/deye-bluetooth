@@ -56,7 +56,7 @@ from .const import (
     MIN_SCAN_INTERVAL,
     MIN_SLOW_INTERVAL,
 )
-from . import registers as r
+from . import models as r
 from .helpers import apply_profile_choice, validate_logger_sn
 
 _LOGGER = logging.getLogger(__name__)

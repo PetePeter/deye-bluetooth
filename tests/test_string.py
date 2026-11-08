@@ -9,7 +9,7 @@ from datetime import datetime
 
 import pytest
 
-from custom_components.deye_ble import registers as r
+from custom_components.deye_ble import models as r
 from custom_components.deye_ble.helpers import (
     async_detect_profile,
     async_poll,

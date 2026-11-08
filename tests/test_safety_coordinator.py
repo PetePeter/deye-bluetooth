@@ -13,7 +13,7 @@ pytest.importorskip("homeassistant")
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.deye_ble import protocol as p
-from custom_components.deye_ble.registers import DISCHARGE_SOC_REGS, REG_MAX_SELL_POWER
+from custom_components.deye_ble.models import DISCHARGE_SOC_REGS, REG_MAX_SELL_POWER
 from tests.test_coordinator import FakeTransport
 from tests.test_registers import FRAMES
 

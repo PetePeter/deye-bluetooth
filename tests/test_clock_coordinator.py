@@ -21,9 +21,9 @@ import custom_components.deye_ble as integration_mod
 from custom_components.deye_ble import const
 from custom_components.deye_ble import coordinator as coord_mod
 from custom_components.deye_ble import protocol as p
-from custom_components.deye_ble import registers as r
+from custom_components.deye_ble import codec, models as r
 from tests.test_coordinator import FakeTransport
-from custom_components.deye_ble.registers import decode_clock, encode_clock
+from custom_components.deye_ble.codec import decode_clock, encode_clock
 from tests.test_registers import CLOCK_DATETIME, FRAMES, clock_frame
 
 # Site time a few minutes after the captured clock reading, so a real (nonzero)
@@ -427,7 +427,7 @@ class FakeInverter:
             ):
                 raise RuntimeError("BLE write of the Time Sync re-enable failed")
             self._flag_write(value)
-        elif r.REG_CLOCK <= address < r.REG_CLOCK + r.CLOCK_WORD_COUNT:
+        elif r.REG_CLOCK <= address < r.REG_CLOCK + codec.CLOCK_WORD_COUNT:
             self._stage(address, value)
         else:
             raise AssertionError(f"unexpected write to 0x{address:04X}")
@@ -471,7 +471,7 @@ class FakeInverter:
 
     def _stage(self, address: int, value: int) -> None:
         index = address - r.REG_CLOCK
-        if not 0 <= index < r.CLOCK_WORD_COUNT:
+        if not 0 <= index < codec.CLOCK_WORD_COUNT:
             raise AssertionError(f"staged a non-clock register 0x{address:04X}")
         if index == 0 and self.windows in self._corrupt_attempts:
             # Observed twice on real hardware, same byte and same family — the
@@ -500,12 +500,12 @@ class FakeInverter:
             return
         current = encode_clock(self.rtc)
         committed = []
-        for index in range(r.CLOCK_WORD_COUNT):
+        for index in range(codec.CLOCK_WORD_COUNT):
             word = self._staged.get(index)
             committed.append(
                 word if word is not None and self._settled(index) else current[index]
             )
-        decoded = r.decode_clock(committed)
+        decoded = codec.decode_clock(committed)
         if decoded is None:
             return  # an unrepresentable frame changes nothing
         self.latched = decoded
@@ -539,7 +539,7 @@ class FakeInverter:
             op for op in self.ops
             if (op[0] == "write_block" and op[1] == r.REG_CLOCK)
             or (op[0] == "write"
-                and r.REG_CLOCK <= op[1] < r.REG_CLOCK + r.CLOCK_WORD_COUNT)
+                and r.REG_CLOCK <= op[1] < r.REG_CLOCK + codec.CLOCK_WORD_COUNT)
         ]
 
 

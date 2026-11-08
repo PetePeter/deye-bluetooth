@@ -9,7 +9,7 @@ from datetime import datetime
 
 import pytest
 
-from custom_components.deye_ble import registers as r
+from custom_components.deye_ble import codec, models as r
 from custom_components.deye_ble import protocol as p
 from custom_components.deye_ble.helpers import (
     async_detect_profile,
@@ -176,8 +176,8 @@ def test_tou_schedule():
 
 
 def test_fault_bits_are_named():
-    assert r._bit_texts(0, r.SP_FAULT_BITS) == "OK"
-    assert r._bit_texts(1 << 22 | 1 << 40, r.SP_FAULT_BITS) == "AC current leakage, bit 40"
+    assert codec._bit_texts(0, r.SP_FAULT_BITS) == "OK"
+    assert codec._bit_texts(1 << 22 | 1 << 40, r.SP_FAULT_BITS) == "AC current leakage, bit 40"
 
 
 def test_telemetry_alone_has_no_settings():

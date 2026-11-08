@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from custom_components.deye_ble.helpers import detect_drift, register_to_key, verify_readback
-from custom_components.deye_ble.registers import (
+from custom_components.deye_ble.models import (
     REG_CHARGE_SOC,
     REG_MAX_SELL_POWER,
     REG_TOU_SLOT2_START,

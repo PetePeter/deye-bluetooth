@@ -10,7 +10,7 @@ import asyncio
 import pytest
 
 from custom_components.deye_ble import protocol as p
-from custom_components.deye_ble import registers as r
+from custom_components.deye_ble import models as r
 from custom_components.deye_ble.helpers import async_poll, validate_logger_sn
 from tests.test_registers import FRAMES
 

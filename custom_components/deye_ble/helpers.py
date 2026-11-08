@@ -10,7 +10,8 @@ import logging
 from datetime import date, datetime
 from typing import Any, Mapping, Protocol
 
-from . import registers as r
+from . import codec
+from . import models as r
 from .models.base import Point, Select
 from .const import (
     CONF_CONNECTION_MODE,
@@ -248,7 +249,7 @@ def clock_within_tolerance(
     the tolerance, but a frame that decodes to nothing tells us the write cannot
     be confirmed, and unconfirmed must not read as confirmed.
     """
-    clock = r.decode_clock(words)
+    clock = codec.decode_clock(words)
     if clock is None:
         return False
     drift = clock_drift_seconds(clock, now)
