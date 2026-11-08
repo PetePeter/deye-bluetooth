@@ -51,26 +51,6 @@ def words_at(words_by_reg: WordBlocks, start: int, count: int) -> list[int] | No
     return None if any(word is None for word in words) else words
 
 
-def decode_scalar(words_by_reg: WordBlocks, table: Mapping, result: dict) -> None:
-    """Decode a table of ``(register, scale, signed, offset)`` scalar values."""
-    for key, (reg, factor, signed, offset) in table.items():
-        raw = lookup(words_by_reg, reg)
-        if raw is None:
-            continue
-        value = scaled(s16(raw) if signed else u16(raw), factor, offset=offset)
-        result[key] = value
-
-
-def decode_32(words_by_reg: WordBlocks, table: Mapping, result: dict) -> None:
-    """Decode low-word-first 32-bit entries from a register table."""
-    for key, (low_reg, high_reg, factor, *signed) in table.items():
-        low, high = lookup(words_by_reg, low_reg), lookup(words_by_reg, high_reg)
-        if low is None or high is None:
-            continue
-        raw = s32(low, high) if signed else u32(low, high)
-        result[key] = round(raw * factor, 2)
-
-
 def _bit_texts(value: int, bits: Mapping[int, str]) -> str:
     if value == 0:
         return "OK"
@@ -177,17 +157,15 @@ def set_flag(raw: int, mask: int, on: bool) -> int:
 _signed16 = s16
 _lookup = lookup
 _words = words_at
-_decode_scalar = decode_scalar
-_decode_32 = decode_32
 _bit_texts = _bit_texts
 _decode_words_bitfield = decode_words_bitfield
 
 
 __all__ = [
     "CLOCK_WORD_COUNT", "WordBlocks", "u16", "s16", "u32", "s32", "scaled",
-    "lookup", "words_at", "decode_scalar", "decode_32", "bitfield_text",
+    "lookup", "words_at", "bitfield_text",
     "serial", "firmware", "split_bytes", "clock", "decode_clock", "encode_clock",
     "encode_hhmm", "decode_hhmm", "set_flag",
-    "_signed16", "_lookup", "_words", "_decode_scalar", "_decode_32",
+    "_signed16", "_lookup", "_words",
     "_bit_texts", "_decode_words_bitfield",
 ]
