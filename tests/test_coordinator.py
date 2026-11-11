@@ -10,7 +10,7 @@ import asyncio
 import pytest
 
 from custom_components.deye_ble import protocol as p
-from custom_components.deye_ble import registers as r
+from custom_components.deye_ble import models as r
 from custom_components.deye_ble.helpers import async_poll, validate_logger_sn
 from tests.test_registers import FRAMES
 
@@ -20,8 +20,8 @@ from tests.test_registers import FRAMES
 class FakeTransport:
     """Duck-typed transport that returns pre-canned register words.
 
-    handshake() succeeds by default.  read() returns the parsed words for a
-    given block start from the FRAMES fixture.
+    handshake() succeeds by default. Captured frames populate a register map,
+    so read() can serve any derived block span.
     """
 
     def __init__(
@@ -50,7 +50,14 @@ class FakeTransport:
         if self._fail_on_block == address:
             raise RuntimeError(f"read failed at 0x{address:04X}")
         self.reads.append((address, count))
-        return p.parse_read(self._frames[address])
+        words = {
+            start + offset: value
+            for start, frame in self._frames.items()
+            for offset, value in enumerate(p.parse_read(frame))
+        }
+        if not any(address <= register < address + count for register in words):
+            raise KeyError(address)
+        return [words.get(address + offset, 0) for offset in range(count)]
 
 
 # --- async_poll tests -------------------------------------------------------

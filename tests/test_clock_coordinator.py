@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,12 +17,13 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.exceptions import HomeAssistantError
 
+import custom_components.deye_ble as integration_mod
 from custom_components.deye_ble import const
 from custom_components.deye_ble import coordinator as coord_mod
 from custom_components.deye_ble import protocol as p
-from custom_components.deye_ble import registers as r
+from custom_components.deye_ble import codec, models as r
 from tests.test_coordinator import FakeTransport
-from custom_components.deye_ble.registers import decode_clock, encode_clock
+from custom_components.deye_ble.codec import decode_clock, encode_clock
 from tests.test_registers import CLOCK_DATETIME, FRAMES, clock_frame
 
 # Site time a few minutes after the captured clock reading, so a real (nonzero)
@@ -348,13 +350,22 @@ class FakeInverter:
     async def read(self, address: int, count: int) -> list[int]:
         await self._io()
         self.ops.append(("read", address, count))
-        if address == self._fail_read_reg:
+        if self._fail_read_reg is not None and address <= self._fail_read_reg < address + count:
             raise RuntimeError(f"BLE read of 0x{address:04X} failed")
-        if address == r.REG_TIME_SYNC:
-            return [self.flags]
-        if address == r.REG_CLOCK:
-            return self._read_clock()
-        return p.parse_read(self._frames[address])
+        words = {
+            start + offset: value
+            for start, frame in self._frames.items()
+            for offset, value in enumerate(p.parse_read(frame))
+        }
+        values = [words.get(address + offset, 0) for offset in range(count)]
+        if address <= r.REG_TIME_SYNC < address + count:
+            values[r.REG_TIME_SYNC - address] = self.flags
+        if address <= r.REG_CLOCK < address + count:
+            clock = self._read_clock()
+            for offset, value in enumerate(clock):
+                if r.REG_CLOCK + offset < address + count:
+                    values[r.REG_CLOCK + offset - address] = value
+        return values
 
     # -- the logger's response cache -----------------------------------------
 
@@ -416,7 +427,7 @@ class FakeInverter:
             ):
                 raise RuntimeError("BLE write of the Time Sync re-enable failed")
             self._flag_write(value)
-        elif r.REG_CLOCK <= address < r.REG_CLOCK + r.CLOCK_WORD_COUNT:
+        elif r.REG_CLOCK <= address < r.REG_CLOCK + codec.CLOCK_WORD_COUNT:
             self._stage(address, value)
         else:
             raise AssertionError(f"unexpected write to 0x{address:04X}")
@@ -460,7 +471,7 @@ class FakeInverter:
 
     def _stage(self, address: int, value: int) -> None:
         index = address - r.REG_CLOCK
-        if not 0 <= index < r.CLOCK_WORD_COUNT:
+        if not 0 <= index < codec.CLOCK_WORD_COUNT:
             raise AssertionError(f"staged a non-clock register 0x{address:04X}")
         if index == 0 and self.windows in self._corrupt_attempts:
             # Observed twice on real hardware, same byte and same family — the
@@ -489,12 +500,12 @@ class FakeInverter:
             return
         current = encode_clock(self.rtc)
         committed = []
-        for index in range(r.CLOCK_WORD_COUNT):
+        for index in range(codec.CLOCK_WORD_COUNT):
             word = self._staged.get(index)
             committed.append(
                 word if word is not None and self._settled(index) else current[index]
             )
-        decoded = r.decode_clock(committed)
+        decoded = codec.decode_clock(committed)
         if decoded is None:
             return  # an unrepresentable frame changes nothing
         self.latched = decoded
@@ -528,7 +539,7 @@ class FakeInverter:
             op for op in self.ops
             if (op[0] == "write_block" and op[1] == r.REG_CLOCK)
             or (op[0] == "write"
-                and r.REG_CLOCK <= op[1] < r.REG_CLOCK + r.CLOCK_WORD_COUNT)
+                and r.REG_CLOCK <= op[1] < r.REG_CLOCK + codec.CLOCK_WORD_COUNT)
         ]
 
 
@@ -1394,6 +1405,38 @@ async def test_sync_while_read_only_is_refused_and_touches_nothing(monkeypatch):
 
     with pytest.raises(HomeAssistantError, match="Read Only"):
         await _make_coordinator(fake, read_only=True).async_sync_clock()
+
+    assert fake.ops == []
+
+
+@pytest.mark.asyncio
+async def test_string_clock_sync_and_commit_are_refused_before_io():
+    fake = FakeInverter(VirtualClock(NOW), flags=SYNC_ON)
+    coordinator = _sync_coordinator(fake, profile=r.PROFILE_STRING)
+
+    with pytest.raises(HomeAssistantError, match="Clock sync is not supported"):
+        await coordinator.async_sync_clock()
+
+    with pytest.raises(HomeAssistantError, match="Clock sync is not supported"):
+        await coordinator._commit_clock(fake, SYNC_ON, 1)
+
+    assert fake.ops == []
+
+
+@pytest.mark.asyncio
+async def test_sync_clock_service_refuses_string_without_writing():
+    fake = FakeInverter(VirtualClock(NOW), flags=SYNC_ON)
+    coordinator = _sync_coordinator(fake, profile=r.PROFILE_STRING)
+    handlers = {}
+    services = SimpleNamespace(
+        async_register=lambda _domain, name, handler: handlers.setdefault(name, handler)
+    )
+    integration_mod.register_sync_clock_service(
+        SimpleNamespace(services=services), coordinator,
+    )
+
+    with pytest.raises(HomeAssistantError, match="Clock sync is not supported"):
+        await handlers["sync_clock"](SimpleNamespace(data={}))
 
     assert fake.ops == []
 

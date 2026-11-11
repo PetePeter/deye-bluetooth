@@ -1,4 +1,4 @@
-"""Time entities — charge window start/end."""
+"""Time entities built from model point descriptors."""
 from __future__ import annotations
 
 from datetime import time as dt_time
@@ -11,64 +11,63 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_LOGGER_SN, DOMAIN
 from .entity import device_info
-from .registers import REG_TOU_SLOT2_START, REG_TOU_SLOT3_START, encode_hhmm
+from .models.base import Time as TimeDescription
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    if coordinator.is_single_phase:
-        return  # charge window = the three-phase TOU slot 2/3 registers
-    async_add_entities([
-        DeyeChargeWindowTime(coordinator, entry, "start"),
-        DeyeChargeWindowTime(coordinator, entry, "end"),
-    ])
+    entities = [
+        DeyeModelTime(coordinator, entry, point)
+        for point in coordinator.model.write_points
+        if any(isinstance(show, TimeDescription) for show in point.shows)
+    ]
+    async_add_entities(entities)
 
 
+class DeyeModelTime(CoordinatorEntity, TimeEntity):
+    """Writable time value described by one model point."""
 
-_SLOT_REGISTER = {
-    "start": REG_TOU_SLOT2_START,   # 0x0095
-    "end": REG_TOU_SLOT3_START,     # 0x0096
-}
-
-
-class DeyeChargeWindowTime(CoordinatorEntity, TimeEntity):
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, entry: ConfigEntry, which: str):
+    def __init__(self, coordinator, entry: ConfigEntry, point):
         super().__init__(coordinator)
-        self._which = which
-        sn = entry.data[CONF_LOGGER_SN]
-        # "From"/"To" (not "Start"/"End") so the auto device page sorts the
-        # start time above the end time (F < T alphabetically). unique_id keeps
-        # the charge_start/charge_end slugs, so history is preserved.
-        self._attr_name = f"Grid Charge {'From' if which == 'start' else 'To'}"
-        self._attr_unique_id = f"{sn}_charge_{which}"
-        self._attr_icon = (
-            "mdi:battery-charging" if which == "start"
-            else "mdi:battery-charging-outline"
+        description = next(
+            show for show in point.shows if isinstance(show, TimeDescription)
         )
-        self._attr_device_info = device_info(sn)
+        if point.write is None:
+            raise ValueError(f"time point {point.key!r} has no write descriptor")
+        self._key = point.key
+        self._write = point.write
+        self._attr_name = description.name
+        self._attr_icon = description.icon
+        self._attr_unique_id = f"{entry.data[CONF_LOGGER_SN]}_{point.key}"
+        self._attr_device_info = device_info(entry.data[CONF_LOGGER_SN])
 
     @property
     def native_value(self) -> dt_time | None:
-        key = f"charge_{self._which}"
-        val = (self.coordinator.data or {}).get(key)
-        if not val:
+        value = (self.coordinator.data or {}).get(self._key)
+        if not value:
             return None
         try:
-            h, m = int(val[:2]), int(val[3:])
-            return dt_time(h, m)
-        except (ValueError, IndexError):
+            return dt_time.fromisoformat(value)
+        except (TypeError, ValueError):
             return None
 
     async def async_set_value(self, value: dt_time) -> None:
-        time_str = f"{value.hour:02d}:{value.minute:02d}"
-        reg_val = encode_hhmm(time_str)
-        await self.coordinator.async_write(_SLOT_REGISTER[self._which], reg_val)
+        time_string = value.strftime("%H:%M")
+        current = self.coordinator.data or {}
+        writes = self._write.values(time_string, current)
+        if len(writes) == 1:
+            register, raw_value = next(iter(writes.items()))
+            await self.coordinator.async_write(register, raw_value)
+        else:
+            await self.coordinator.async_write_many(writes)
+        decoded = self.coordinator.model.decode(
+            {register: [raw_value] for register, raw_value in writes.items()},
+        )
         self.coordinator.async_set_updated_data(
-            {**(self.coordinator.data or {}),
-             f"charge_{self._which}": time_str},
+            {**current, **decoded, self._key: time_string},
         )
         self.coordinator.mark_config_dirty()

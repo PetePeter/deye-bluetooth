@@ -11,7 +11,7 @@ pytest.importorskip("homeassistant")
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.deye_ble import coordinator as coord_mod
-from custom_components.deye_ble import registers as r
+from custom_components.deye_ble import models as r
 from custom_components.deye_ble.const import (
     CONF_CONNECTION_MODE,
     CONF_LIVE_INTERVAL,
@@ -25,19 +25,10 @@ from custom_components.deye_ble.const import (
 )
 from custom_components.deye_ble import protocol as p
 from custom_components.deye_ble.helpers import apply_profile_choice, migrate_options
+from tests.fixtures.three_phase import FULL_FRAMES
 from tests.test_registers import FRAMES
 from tests.test_safety_coordinator import _counting_factory, _stub_ble_device
 from tests.test_single_phase import CONFIG, DEVICE_TYPE, TELEMETRY
-
-
-def _frame(count: int) -> str:
-    body = bytes([0x01, 0x03, 2 * count]) + bytes(2 * count)
-    return "+ok=" + (body + p.crc16(body)).hex().upper()
-
-
-# Captured telemetry plus an all-zero frame for every slow block, so a slow
-# read decodes (and is acknowledged) like it would on the device.
-FULL_FRAMES = {**{start: _frame(n) for start, n in r.SLOW_BLOCKS}, **FRAMES}
 
 
 def _factory():

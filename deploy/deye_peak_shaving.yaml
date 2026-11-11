@@ -1,16 +1,20 @@
-# Deye — Grid/Gen Peak Shaving Schedule
-# =====================================
-# Enables grid AND generator peak-shaving daily from 11:00 to 14:00, and
-# disables both outside that window. Peak-shaving caps the power the inverter
-# will pull from the grid (and generator); once the grid import hits that cap,
-# the inverter can no longer use grid power to charge the battery, so charging
-# may slow. The second automation warns Oscar when that limit is actually hit.
+# Deye — Grid Peak Shaving Schedule
+# =================================
+# Enables grid peak-shaving daily from 11:00 to 14:00, and disables it outside
+# that window. Peak-shaving caps the power the inverter will pull from the grid;
+# once grid import hits that cap, the inverter can no longer use grid power to
+# charge the battery, so charging may slow. The second automation warns Oscar
+# when that limit is actually hit.
 #
-# The enable state lives in the packed 0x00B2 flag register; the integration's
-# Grid/Gen Peak Shaving switches read-modify-write it, so toggling one never
-# disturbs the other function bits. The W caps are set independently via the
-# Grid/Gen Peak Shave Power numbers and are left untouched here — edit them in
-# the UI and the integration pushes the change through on the spot.
+# Gen peak-shaving is deliberately left alone — only the grid switch is touched.
+# Grid and gen share the packed 0x00B2 flag register, and writing both at once
+# raced (the two read-modify-writes clobbered each other, flipping grid back off
+# a second later). Writing only the grid switch removes that race entirely.
+#
+# The enable state lives in the 0x00B2 flag register; the integration's Grid
+# Peak Shaving switch read-modify-writes it. The W cap is set independently via
+# the Grid Peak Shave Power number and is left untouched here — edit it in the
+# UI and the integration pushes the change through on the spot.
 #
 # Like the sell schedule, BLE write resilience lives in the integration (each
 # write retries + read-back-verifies), so these automations issue writes once
@@ -19,7 +23,7 @@
 automation:
   # --- Window: on at 11:00, off at 14:00 (and reassert on HA start) ----------
   - id: deye_peak_shaving_window
-    alias: "Battery — Grid/Gen Peak Shaving Window"
+    alias: "Battery — Grid Peak Shaving Window"
     mode: single
     max_exceeded: silent
     trigger:
@@ -35,31 +39,45 @@ automation:
           desired: "{{ 'on' if in_window else 'off' }}"
 
       # Templated service resolves to switch.turn_on / switch.turn_off.
+      # Grid only — gen peak-shaving is left untouched to avoid the shared-
+      # register write race that flipped grid back off.
       - action: "switch.turn_{{ desired }}"
         continue_on_error: true
         target:
-          entity_id:
-            - switch.deye_inverter_ble_grid_peak_shaving
-            - switch.deye_inverter_ble_gen_peak_shaving
+          entity_id: switch.deye_inverter_ble_grid_peak_shaving
 
-      # Let the inverter apply both bit writes before we read them back.
-      - delay: "00:00:15"
+      # Wait for the read-back to show the wanted state. A fixed delay raced
+      # concurrent writes (sell schedule at 11:00) and alerted on a stale poll.
+      - wait_template: >
+          {{ is_state('switch.deye_inverter_ble_grid_peak_shaving', desired) }}
+        timeout: "00:01:30"
+        continue_on_timeout: true
 
-      # --- Verify both toggles landed; alert Oscar only if not ---------------
-      - variables:
-          grid_ok: "{{ is_state('switch.deye_inverter_ble_grid_peak_shaving', desired) }}"
-          gen_ok: "{{ is_state('switch.deye_inverter_ble_gen_peak_shaving', desired) }}"
+      # --- Not landed: alert, keep watching, then all-clear or re-alert -----
       - if:
           - condition: template
-            value_template: "{{ not (grid_ok and gen_ok) }}"
+            value_template: "{{ not wait.completed }}"
         then:
-          - action: notify.mobile_app_phone_oscar
+          - action: notify.oscar
             data:
               title: "⚠️ Deye peak-shaving toggle failed"
               message: >
-                Wanted grid+gen peak shaving {{ desired }} after 3 BLE tries.
-                Now grid={{ states('switch.deye_inverter_ble_grid_peak_shaving') }},
-                gen={{ states('switch.deye_inverter_ble_gen_peak_shaving') }}.
+                Wanted grid peak shaving {{ desired }}, still
+                {{ states('switch.deye_inverter_ble_grid_peak_shaving') }} after 90s.
+                Watching for 15 min.
+          - wait_template: >
+              {{ is_state('switch.deye_inverter_ble_grid_peak_shaving', desired) }}
+            timeout: "00:15:00"
+            continue_on_timeout: true
+          - action: notify.oscar
+            data:
+              title: >
+                {{ '✅ Deye peak shaving OK now' if wait.completed
+                   else '❌ Deye peak shaving still failed' }}
+              message: >
+                Grid peak shaving is
+                {{ states('switch.deye_inverter_ble_grid_peak_shaving') }}
+                (wanted {{ desired }}).
 
   # --- Alert when grid import actually reaches the grid peak-shave cap --------
   # grid_power is signed: positive = importing from the grid. When import climbs
@@ -92,7 +110,7 @@ automation:
             Grid import ({{ states('sensor.deye_inverter_ble_grid_power') }} W) has reached the
             grid peak-shave cap ({{ states('number.deye_inverter_ble_grid_peak_shave_power') }} W).
             Battery charge may be reduced because of grid import limits.
-      - action: notify.mobile_app_phone_oscar
+      - action: notify.oscar
         data:
           title: "🔌 Grid import at peak-shave limit"
           message: >

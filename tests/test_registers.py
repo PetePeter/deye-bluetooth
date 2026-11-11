@@ -14,7 +14,7 @@ from datetime import datetime
 import pytest
 
 from custom_components.deye_ble import protocol as p
-from custom_components.deye_ble import registers as r
+from custom_components.deye_ble import codec, models as r
 
 
 # --- Captured frames (block_start -> raw +ok= response) ---------------------
@@ -29,6 +29,8 @@ FRAMES: dict[int, str] = {
     0x0280: "+ok=010320015800A7031E051D097609400942000000000000015800A7031E051D051D1383E5C8",
     0x02A0: "+ok=01032006F70000000000000A330044001F00000000000000000000000000000000FFFFA4B0",
 }
+
+GRID_FREQUENCY_WORDS = {0x0261: [5000]}
 
 
 def _words_by_reg(*block_starts: int) -> dict[int, list[int]]:
@@ -256,7 +258,7 @@ def test_grid_voltages_decode_from_real_0x0270_frame(poll):
 
 def test_grid_frequency_decode():
     # 0x0261 ÷100 Hz.
-    assert r.decode({0x0261: [5000]})["grid_frequency"] == 50.0
+    assert r.decode(GRID_FREQUENCY_WORDS)["grid_frequency"] == 50.0
 
 
 def test_bms_limits_decode():
@@ -318,14 +320,14 @@ def test_peak_shave_block_is_polled():
 def test_set_flag_read_modify_write_preserves_other_bits():
     # Enabling grid shaving on the baseline must only set bit 4 (0x2AAA -> 0x2ABA)
     # and must not disturb the gen bit or any other function bit.
-    assert r.set_flag(0x2AAA, r.GRID_PEAK_SHAVE_MASK, True) == 0x2ABA
+    assert codec.set_flag(0x2AAA, r.GRID_PEAK_SHAVE_MASK, True) == 0x2ABA
     # Enabling gen on top of grid-on preserves the grid bit (0x2ABA -> 0x2ABE).
-    assert r.set_flag(0x2ABA, r.GEN_PEAK_SHAVE_MASK, True) == 0x2ABE
+    assert codec.set_flag(0x2ABA, r.GEN_PEAK_SHAVE_MASK, True) == 0x2ABE
     # Disabling grid from the both-on word clears only bit 4 (0x2ABE -> 0x2AAE).
-    assert r.set_flag(0x2ABE, r.GRID_PEAK_SHAVE_MASK, False) == 0x2AAE
+    assert codec.set_flag(0x2ABE, r.GRID_PEAK_SHAVE_MASK, False) == 0x2AAE
     # Setting an already-set bit / clearing an already-clear bit is a no-op.
-    assert r.set_flag(0x2ABA, r.GRID_PEAK_SHAVE_MASK, True) == 0x2ABA
-    assert r.set_flag(0x2AAA, r.GEN_PEAK_SHAVE_MASK, False) == 0x2AAA
+    assert codec.set_flag(0x2ABA, r.GRID_PEAK_SHAVE_MASK, True) == 0x2ABA
+    assert codec.set_flag(0x2AAA, r.GEN_PEAK_SHAVE_MASK, False) == 0x2AAA
 
 
 # --- Encoders / signedness ---------------------------------------------------
@@ -337,12 +339,12 @@ def test_work_mode_roundtrip():
 
 def test_hhmm_roundtrip():
     for raw in (0, 1100, 1400, 1500, 2359):
-        assert r.encode_hhmm(r.decode_hhmm(raw)) == raw
+        assert codec.encode_hhmm(codec.decode_hhmm(raw)) == raw
 
 
 def test_hhmm_encode_known_values():
-    assert r.encode_hhmm("14:00") == 1400
-    assert r.encode_hhmm("15:00") == 1500
+    assert codec.encode_hhmm("14:00") == 1400
+    assert codec.encode_hhmm("15:00") == 1500
 
 
 @pytest.mark.parametrize("bad", [
@@ -351,12 +353,12 @@ def test_hhmm_encode_known_values():
 ])
 def test_hhmm_encode_rejects_invalid(bad):
     with pytest.raises(ValueError):
-        r.encode_hhmm(bad)
+        codec.encode_hhmm(bad)
 
 
 def test_hhmm_decode_rejects_invalid():
     with pytest.raises(ValueError):
-        r.decode_hhmm(2400)
+        codec.decode_hhmm(2400)
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -368,7 +370,7 @@ def test_hhmm_decode_rejects_invalid():
     (0xFED8, -296),
 ])
 def test_signed16(raw, expected):
-    assert r._signed16(raw) == expected
+    assert codec._signed16(raw) == expected
 
 
 # --- Inverter real-time clock (0x003E-0x0040) -------------------------------
@@ -389,13 +391,13 @@ def clock_frame(words: list[int] = None) -> str:
 
 
 def test_clock_decodes_captured_frame():
-    assert r.decode_clock(CLOCK_WORDS) == CLOCK_DATETIME
+    assert codec.decode_clock(CLOCK_WORDS) == CLOCK_DATETIME
 
 
 def test_clock_encodes_to_captured_frame():
     # Byte-for-byte against the captured cloud write — this is what catches a
     # hi/lo swap if the register layout is ever re-derived.
-    assert r.encode_clock(CLOCK_DATETIME) == CLOCK_WORDS
+    assert codec.encode_clock(CLOCK_DATETIME) == CLOCK_WORDS
 
 
 @pytest.mark.parametrize("value", [
@@ -405,7 +407,7 @@ def test_clock_encodes_to_captured_frame():
     datetime(2026, 12, 31, 23, 59, 59),   # every field at its maximum
 ])
 def test_clock_round_trip(value):
-    assert r.decode_clock(r.encode_clock(value)) == value
+    assert codec.decode_clock(codec.encode_clock(value)) == value
 
 
 @pytest.mark.parametrize("words,why", [
@@ -419,19 +421,19 @@ def test_clock_round_trip(value):
 ])
 def test_clock_decode_rejects_implausible(words, why):
     # Undecoded beats quietly wrong: a bad frame yields nothing, not a guess.
-    assert r.decode_clock(words) is None, why
+    assert codec.decode_clock(words) is None, why
 
 
 def test_clock_encode_rejects_unrepresentable_year():
     with pytest.raises(ValueError):
-        r.encode_clock(datetime(1999, 1, 1, 0, 0, 0))
+        codec.encode_clock(datetime(1999, 1, 1, 0, 0, 0))
 
 
 def test_clock_decodes_second_captured_frame():
     # Independent second anchor: the app's "set 09:30" write, captured
     # 2026-08-09. Confirms 0x0040 packs minute in the HIGH byte — two captures
     # from different times agreeing is what pins the byte order.
-    assert r.decode_clock([0x1A08, 0x0909, 0x1E00]) == datetime(2026, 8, 9, 9, 30, 0)
+    assert codec.decode_clock([0x1A08, 0x0909, 0x1E00]) == datetime(2026, 8, 9, 9, 30, 0)
 
 
 def test_decode_publishes_clock():
@@ -458,11 +460,11 @@ def test_time_sync_mask_is_bit0():
 
 
 def test_time_sync_enable_preserves_the_other_panel_bits():
-    assert r.set_flag(0x0AEA, r.TIME_SYNC_MASK, True) == 0x0AEB
+    assert codec.set_flag(0x0AEA, r.TIME_SYNC_MASK, True) == 0x0AEB
 
 
 def test_time_sync_disable_preserves_the_other_panel_bits():
-    assert r.set_flag(0x0AEB, r.TIME_SYNC_MASK, False) == 0x0AEA
+    assert codec.set_flag(0x0AEB, r.TIME_SYNC_MASK, False) == 0x0AEA
 
 
 @pytest.mark.parametrize("raw,expected", [(0x0AEB, True), (0x0AEA, False)])

@@ -158,4 +158,4 @@ CLOCK_SYNC_TOLERANCE = 90
 DEVICE_NAME = "Deye Inverter (BLE)"  # coexistence with deyecloud "Deye Inverter"
 
 # Re-export for convenience
-from .registers import WORK_MODE_LABELS  # noqa: F401
+from .models import WORK_MODE_LABELS  # noqa: F401

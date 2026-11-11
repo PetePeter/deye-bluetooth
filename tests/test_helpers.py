@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from custom_components.deye_ble import registers as r
+from custom_components.deye_ble import codec, models as r
 from custom_components.deye_ble.helpers import (
     clock_drift_seconds,
     clock_within_tolerance,
@@ -195,7 +195,7 @@ def test_drift_ignores_timezone_on_now():
 def test_clock_registers_are_never_reasserted():
     # The RTC legitimately changes every second, so it must never enter the
     # local-wins drift-correction path — that would fight the inverter forever.
-    for offset in range(r.CLOCK_WORD_COUNT):
+    for offset in range(codec.CLOCK_WORD_COUNT):
         assert register_to_key(r.REG_CLOCK + offset) is None
 
 
@@ -265,7 +265,7 @@ _TOLERANCE = 90
 
 def test_verify_accepts_a_readback_that_has_ticked_on():
     # The RTC advances during the commit + settle; a few seconds is success.
-    readback = r.encode_clock(_VERIFY_NOW + timedelta(seconds=8))
+    readback = codec.encode_clock(_VERIFY_NOW + timedelta(seconds=8))
     assert clock_within_tolerance(readback, _VERIFY_NOW, _TOLERANCE) is True
 
 
@@ -273,7 +273,7 @@ def test_verify_rejects_the_observed_year_corruption():
     # Regression test for the real fault: the year byte 0x1A landed as 0x7A,
     # giving 2122, with month/day/hour/minute/second all correct. Everything a
     # field-by-field check would compare still matches.
-    corrupted = r.encode_clock(_VERIFY_NOW)
+    corrupted = codec.encode_clock(_VERIFY_NOW)
     corrupted[0] = (corrupted[0] & 0x00FF) | (0x7A << 8)
     assert clock_within_tolerance(corrupted, _VERIFY_NOW, _TOLERANCE) is False
 
@@ -292,12 +292,12 @@ def test_verify_rejects_a_short_readback():
     (91, False), (-91, False),   # one second past it is not
 ])
 def test_verify_tolerance_boundary(offset, expected):
-    readback = r.encode_clock(_VERIFY_NOW + timedelta(seconds=offset))
+    readback = codec.encode_clock(_VERIFY_NOW + timedelta(seconds=offset))
     assert clock_within_tolerance(readback, _VERIFY_NOW, _TOLERANCE) is expected
 
 
 def test_verify_ignores_timezone_on_now():
     # dt_util.now() is aware; the inverter reports a bare wall clock.
     aware = datetime(2026, 8, 9, 10, 0, 0, tzinfo=timezone(timedelta(hours=10)))
-    readback = r.encode_clock(datetime(2026, 8, 9, 10, 0, 5))
+    readback = codec.encode_clock(datetime(2026, 8, 9, 10, 0, 5))
     assert clock_within_tolerance(readback, aware, _TOLERANCE) is True

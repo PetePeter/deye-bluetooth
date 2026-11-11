@@ -10,6 +10,8 @@ One BLE central at a time: the phone app and HA cannot both connect.
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
+from itertools import product
 import logging
 
 from bleak import BleakClient
@@ -21,6 +23,7 @@ _LOGGER = logging.getLogger(__name__)
 
 WRITE_CHAR = "0000fec7-0000-1000-8000-00805f9b34fb"   # write-with-response
 NOTIFY_CHAR = "0000fed8-0000-1000-8000-00805f9b34fb"  # notify (CCCD enabled by bleak)
+PROBE_TIMEOUT = 2.0  # seconds per candidate pair when scanning non-default WiBLE consoles
 
 DEFAULT_TIMEOUT = 10.0  # seconds to await a notification reply
 CONNECT_ATTEMPTS = 3    # establish_connection retries transient proxy failures
@@ -43,17 +46,26 @@ class DeyeBleTransport:
             await t.write(0x008F, 100)
     """
 
-    def __init__(self, ble_device, timeout: float = DEFAULT_TIMEOUT):
+    def __init__(
+        self, ble_device, timeout: float = DEFAULT_TIMEOUT,
+        write_uuid: str = WRITE_CHAR, notify_uuid: str = NOTIFY_CHAR,
+    ):
         self._device = ble_device
+        self._address = getattr(ble_device, "address", None)
         # For establish_connection logging; BLEDevice exposes name/address.
-        self._name = getattr(ble_device, "name", None) or getattr(
-            ble_device, "address", "deye"
-        )
+        self._name = getattr(ble_device, "name", None) or self._address or "deye"
+        self._write_char, self._notify_char = write_uuid, notify_uuid
         self._timeout = timeout
         self._disconnect_timeout = DISCONNECT_TIMEOUT
         self._client: BleakClient | None = None
         self._reply: asyncio.Future[str] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._handshook = False
+
+    @property
+    def console_uuids(self) -> tuple[str, str]:
+        """Write and notify UUIDs selected for this transport."""
+        return self._write_char, self._notify_char
 
     async def __aenter__(self) -> "DeyeBleTransport":
         await self.connect()
@@ -64,6 +76,7 @@ class DeyeBleTransport:
 
     async def connect(self) -> None:
         self._loop = asyncio.get_running_loop()
+        self._handshook = False
         # Use bleak-retry-connector — the resilient path HA expects. It routes
         # through the ESP32 proxies, retries transient failures, and handles the
         # reconnect churn that raw BleakClient.connect() does not.
@@ -83,10 +96,51 @@ class DeyeBleTransport:
         # restarted — an integration reload cannot undo it. Re-raise as
         # DeyeBleError so the coordinator's failure grace rides it out.
         try:
-            await self._client.start_notify(NOTIFY_CHAR, self._on_notify)
+            await self._open_console()
+        except DeyeBleError:
+            await self.disconnect()
+            raise
         except Exception as e:  # noqa: BLE001 — notify can raise many bleak errors
             await self.disconnect()
             raise DeyeBleError(f"start_notify failed: {e}") from e
+
+    async def _open_console(self) -> None:
+        """Subscribe to the configured console, or scan GATT if absent (WiBLE 1.7+)."""
+        assert self._client is not None
+        services = getattr(self._client, "services", None)
+        if services is None:
+            await self._client.start_notify(self._notify_char, self._on_notify)
+            return
+        chars = [c for s in services for c in s.characteristics]
+        uuids = {c.uuid.lower() for c in chars}
+        if not chars or {self._write_char.lower(), self._notify_char.lower()} <= uuids:
+            await self._client.start_notify(self._notify_char, self._on_notify)
+            return
+        writers = [c.uuid for c in chars if "write" in c.properties]
+        notifiers = [c.uuid for c in chars if "notify" in c.properties]
+        probe = min(self._timeout, PROBE_TIMEOUT)
+        for write_char, notify_char in product(writers, notifiers):
+            try:
+                await self._client.start_notify(notify_char, self._on_notify)
+                reply = await self._command(
+                    b"AT+DTYPE\n", write_char=write_char, timeout=probe
+                )
+                if not p.is_handshake_ack(reply):
+                    raise DeyeBleError(f"unexpected handshake reply: {reply!r}")
+            except Exception:  # noqa: BLE001 — try next candidate pair
+                with suppress(Exception):
+                    await self._client.stop_notify(notify_char)
+                continue
+            self._write_char, self._notify_char = write_char, notify_char
+            self._handshook = True
+            _LOGGER.warning(
+                "Deye BLE console discovered on write=%s notify=%s",
+                write_char, notify_char,
+            )
+            return
+        raise DeyeBleError(
+            f"no AT console answered among {len(writers)} write x {len(notifiers)} notify chars"
+        )
 
     async def disconnect(self) -> None:
         """Tear down the session, but never block on it.
@@ -99,10 +153,11 @@ class DeyeBleTransport:
         finish in the background instead of abandoning a half-open link.
         """
         client, self._client = self._client, None
+        self._handshook = False
         if client is None:
             return
         for coro, what in (
-            (client.stop_notify(NOTIFY_CHAR), "stop_notify"),
+            (client.stop_notify(self._notify_char), "stop_notify"),
             (client.disconnect(), "disconnect"),
         ):
             try:
@@ -115,19 +170,26 @@ class DeyeBleTransport:
         if self._reply is not None and not self._reply.done():
             self._reply.set_result(text)
 
-    async def _command(self, payload: bytes) -> str:
+    async def _command(
+        self, payload: bytes, *, write_char: str | None = None, timeout: float | None = None
+    ) -> str:
         if self._client is None or self._loop is None:
             raise DeyeBleError("not connected")
         self._reply = self._loop.create_future()
-        await self._client.write_gatt_char(WRITE_CHAR, payload, response=True)
+        await self._client.write_gatt_char(
+            write_char or self._write_char, payload, response=True
+        )
         try:
-            return await asyncio.wait_for(self._reply, self._timeout)
+            return await asyncio.wait_for(self._reply, timeout or self._timeout)
         except asyncio.TimeoutError as e:
             raise DeyeBleError(f"no reply to {payload!r}") from e
         finally:
             self._reply = None
 
     async def handshake(self) -> None:
+        if self._handshook:
+            self._handshook = False
+            return
         reply = await self._command(b"AT+DTYPE\n")
         if not p.is_handshake_ack(reply):
             raise DeyeBleError(f"unexpected handshake reply: {reply!r}")

@@ -8,6 +8,8 @@ reaches the caller, and that the drift entity is not left stale afterwards.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 pytest.importorskip("homeassistant")
@@ -15,7 +17,8 @@ pytest.importorskip("homeassistant")
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.deye_ble import const
-from custom_components.deye_ble.button import DeyeSyncClockButton
+from custom_components.deye_ble import models as r
+from custom_components.deye_ble.button import DeyeSyncClockButton, async_setup_entry
 from tests.test_clock_coordinator import (
     NOW,
     SYNC_ON,
@@ -34,6 +37,7 @@ class FakeEntry:
 
     def __init__(self, sn: str = LOGGER_SN):
         self.data = {const.CONF_LOGGER_SN: sn}
+        self.entry_id = "test-entry"
 
 
 def _button(fake, *, read_only: bool = False):
@@ -146,3 +150,17 @@ async def test_a_read_only_press_is_refused_and_touches_nothing(monkeypatch):
 
     assert fake.writes == []
     assert fake.latched is None
+
+
+@pytest.mark.asyncio
+async def test_string_profile_does_not_create_the_sync_clock_button():
+    coordinator = _make_coordinator(
+        FakeInverter(VirtualClock(NOW)), profile=r.PROFILE_STRING,
+    )
+    entry = FakeEntry()
+    hass = SimpleNamespace(data={const.DOMAIN: {entry.entry_id: coordinator}})
+    added = []
+
+    await async_setup_entry(hass, entry, added.extend)
+
+    assert added == []

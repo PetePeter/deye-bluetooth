@@ -17,7 +17,8 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from . import registers as r
+from . import codec
+from . import models as r
 from .const import (
     CLOCK_CACHE_MAX_AGE,
     CLOCK_SYNC_ATTEMPTS,
@@ -75,7 +76,7 @@ _LOGGER = logging.getLogger(__name__)
 class DeyeBleCoordinator(DataUpdateCoordinator):
     """Polls the LIVE tier every cycle, FAST about once a minute and SLOW on
     the slow interval or when mark_config_dirty() is called (see
-    registers.PROFILES). Values from tiers not read this cycle carry forward.
+    models.PROFILES). Values from tiers not read this cycle carry forward.
 
     Write safety: read-only lock (default ON), read-back verify, and optional
     local-wins reassert.
@@ -97,10 +98,12 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         cloud_sync_interval: int = DEFAULT_CLOUD_SYNC_INTERVAL,
         cloud_window: int = DEFAULT_CLOUD_WINDOW,
         profile: str = r.PROFILE_THREE_PHASE,
+        console_uuids: dict[str, str] | None = None,
     ) -> None:
         super().__init__(hass, _LOGGER, name=DOMAIN)
         self._address = address
         self._transport_factory = transport_factory
+        self._console_uuids = console_uuids if console_uuids is not None else {}
         self._profile = profile
         self._scan_interval = scan_interval
         self._live_interval = live_interval
@@ -154,6 +157,10 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # device is momentarily absent.
         if self._read_only:
             raise HomeAssistantError(READ_ONLY_ERROR)
+
+    def _refuse_if_clock_not_writable(self) -> None:
+        if not self.model.capabilities.clock_writable:
+            raise HomeAssistantError("Clock sync is not supported for this inverter profile")
 
     @property
     def reassert(self) -> bool:
@@ -265,12 +272,14 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         """
         if not self._hold_link():
             async with self._transport_factory(ble_device) as transport:
+                self._remember_console_uuids(transport)
                 yield transport
             return
 
         if self._persistent is None:
             transport = self._transport_factory(ble_device)
             await transport.connect()
+            self._remember_console_uuids(transport)
             self._persistent = transport
         try:
             yield self._persistent
@@ -280,14 +289,20 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             await self._drop_persistent()
             raise
 
+    def _remember_console_uuids(self, transport) -> None:
+        pair = getattr(transport, "console_uuids", None)
+        if pair is not None:
+            self._console_uuids.update(write_uuid=pair[0], notify_uuid=pair[1])
+
     @property
     def profile(self) -> str:
-        """Register map in use (see registers.PROFILES)."""
+        """Persisted model id in use."""
         return self._profile
 
     @property
-    def is_single_phase(self) -> bool:
-        return self._profile == r.PROFILE_SINGLE_PHASE
+    def model(self) -> r.Model:
+        """Registered descriptor set for the current inverter."""
+        return r.get(self._profile)
 
     @property
     def register_profile(self) -> r.RegisterProfile:
@@ -401,9 +416,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # Reassert: if enabled, detect drift and re-apply drifted values once.
         if self._reassert and self._tracked_values:
             drifted = detect_drift(
-                self._tracked_values, data,
-                {reg: key for key, reg in self.register_profile.controls.items()}
-                if self.is_single_phase else None,
+                self._tracked_values, data, self.model.reassert_points,
             )
             if drifted:
                 _LOGGER.info("reassert: correcting %d drifted register(s)", len(drifted))
@@ -556,6 +569,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Raises HomeAssistantError if no attempt verifies, or if the clock landed
         but Time Sync could not be re-enabled.
         """
+        self._refuse_if_clock_not_writable()
         self._refuse_if_read_only()
 
         ble_device = self._resolve_device()
@@ -798,8 +812,8 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         CLOCK_CACHE_MAX_AGE stale, and the caller compensates with a margin
         rather than pretending the number is exact.
         """
-        frame = await transport.read(self.register_profile.clock_reg, r.CLOCK_WORD_COUNT)
-        clock = r.decode_clock(frame)
+        frame = await transport.read(self.register_profile.clock_reg, codec.CLOCK_WORD_COUNT)
+        clock = codec.decode_clock(frame)
         if clock is None:
             return None
         return clock_drift_seconds(clock, dt_util.now())
@@ -810,10 +824,11 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         Transport errors propagate: the caller needs them to leave the session
         context so a broken link is dropped before the next attempt.
         """
+        self._refuse_if_clock_not_writable()
         time_sync_reg = self.register_profile.time_sync_reg
         if time_sync_reg is not None:
             await transport.write(
-                time_sync_reg, r.set_flag(pre_flags, r.TIME_SYNC_MASK, True)
+                time_sync_reg, codec.set_flag(pre_flags, r.TIME_SYNC_MASK, True)
             )
         # See CLOCK_SYNC_SETTLE: evidence for this gap is one rehearsal each
         # way, so it is deliberate but honestly unconfirmed.
@@ -832,7 +847,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # the feature more brittle than it was before the guard existed — an
         # inverter we cannot read is exactly one whose clock still needs setting.
         try:
-            pre_frame = tuple(await transport.read(self.register_profile.clock_reg, r.CLOCK_WORD_COUNT))
+            pre_frame = tuple(await transport.read(self.register_profile.clock_reg, codec.CLOCK_WORD_COUNT))
         except Exception as exc:  # noqa: BLE001 — the guard is best-effort
             _LOGGER.debug("no pre-write frame for the cache guard: %s", exc)
             pre_frame = None
@@ -844,11 +859,11 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         # construction — there is no longer a gap between register writes for an
         # error to land in.
         target = dt_util.now()
-        await transport.write_block(self.register_profile.clock_reg, r.encode_clock(target))
+        await transport.write_block(self.register_profile.clock_reg, codec.encode_clock(target))
 
         if time_sync_reg is not None:
             await transport.write(
-                time_sync_reg, r.set_flag(pre_flags, r.TIME_SYNC_MASK, False)
+                time_sync_reg, codec.set_flag(pre_flags, r.TIME_SYNC_MASK, False)
             )
 
         verdict = await self._verify_commit(transport, attempt, pre_frame)
@@ -873,7 +888,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         the bounded extension.
         """
         await asyncio.sleep(CLOCK_COMMIT_SETTLE)
-        frame = await transport.read(self.register_profile.clock_reg, r.CLOCK_WORD_COUNT)
+        frame = await transport.read(self.register_profile.clock_reg, codec.CLOCK_WORD_COUNT)
 
         if pre_frame is not None and tuple(frame) == pre_frame:
             # The RTC ticks unconditionally, so a byte-identical frame cannot be
@@ -895,7 +910,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             )
             return VERIFY_UNVERIFIED
 
-        if r.decode_clock(frame) is None:
+        if codec.decode_clock(frame) is None:
             _LOGGER.warning(
                 "inverter clock unverified on attempt %d/%d: read back an "
                 "undecodable frame", attempt, CLOCK_SYNC_ATTEMPTS,
@@ -905,7 +920,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
         if not clock_within_tolerance(frame, dt_util.now(), CLOCK_SYNC_TOLERANCE):
             _LOGGER.warning(
                 "inverter clock did not take on attempt %d/%d: read back %s",
-                attempt, CLOCK_SYNC_ATTEMPTS, r.decode_clock(frame),
+                attempt, CLOCK_SYNC_ATTEMPTS, codec.decode_clock(frame),
             )
             return VERIFY_WRONG
 
@@ -980,7 +995,7 @@ class DeyeBleCoordinator(DataUpdateCoordinator):
             await transport.handshake()
             await transport.write(
                 self.register_profile.time_sync_reg,
-                r.set_flag(pre_flags, r.TIME_SYNC_MASK, True),
+                codec.set_flag(pre_flags, r.TIME_SYNC_MASK, True),
             )
 
     def _record_sync_outcome(self, result: str, attempts: int) -> None:

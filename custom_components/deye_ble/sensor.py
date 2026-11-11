@@ -1,7 +1,7 @@
 """Sensor entities mirroring the ha-deyecloud-bridge sensor set.
 
 All telemetry sensors are thin CoordinatorEntity wrappers — logic lives in
-registers.decode (P2) and helpers.daily_calc (P4). No non-trivial logic here.
+models.decode (P2) and helpers.daily_calc (P4). No non-trivial logic here.
 """
 from __future__ import annotations
 
@@ -24,160 +24,39 @@ from homeassistant.util import dt as dt_util
 from .const import CONF_LOGGER_SN, DOMAIN, SYNC_RESULTS
 from .entity import device_info
 from .helpers import daily_calc
-from .registers import active_tou_slot
-
-# (key, name, unit, device_class, state_class, icon, precision)
-SENSORS: list[tuple] = [
-    ("solar_power",             "Solar Power",            "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:solar-power",               0),
-    ("house_load",              "House Load",             "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:home-lightning-bolt",       0),
-    ("grid_power",              "Grid Power",             "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:transmission-tower",        0),
-    ("battery_power",           "Battery Power",          "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:battery-charging",          0),
-    ("ups_power",               "UPS Power",              "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:power-plug",                0),
-    ("battery_soc",             "Battery SOC",            "%",   SensorDeviceClass.BATTERY,     SensorStateClass.MEASUREMENT,    None,                            1),
-    ("battery_voltage",         "Battery Voltage",        "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            2),
-    ("pv1_voltage",             "PV1 Voltage",            "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    "mdi:solar-panel",               1),
-    ("pv1_current",             "PV1 Current",            "A",   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,    "mdi:solar-panel",               1),
-    ("battery_temp",            "Battery Temperature",    "°C",  SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,    None,                            1),
-    ("inverter_temp",           "Inverter Temperature",   "°C",  SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,    None,                            1),
-    ("daily_solar",             "Solar Today",            "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:solar-power",             2),
-    ("daily_grid_import",       "Grid Import Today",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-import", 2),
-    ("daily_grid_export",       "Grid Export Today",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-export", 2),
-    ("total_solar",             "Solar Total",            "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, None,                          2),
-    ("total_grid_import",       "Grid Import Total",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-import", 2),
-    ("total_grid_export",       "Grid Export Total",      "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower-export", 2),
-    ("total_battery_charge",    "Battery Charge Total",   "kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, None,                          2),
-    ("total_battery_discharge", "Battery Discharge Total","kWh", SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, None,                          2),
-    ("max_sell_power",          "Max Sell Power",         "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:transmission-tower-export", 0),
-    ("inverter_power_l1",      "Inverter Output L1",    "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:lightning-bolt",            0),
-    ("inverter_power_l2",      "Inverter Output L2",    "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:lightning-bolt",            0),
-    ("inverter_power_l3",      "Inverter Output L3",    "W",   SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,    "mdi:lightning-bolt",            0),
-    ("grid_voltage_l1",        "Grid Voltage L1",       "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            1),
-    ("grid_voltage_l2",        "Grid Voltage L2",       "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            1),
-    ("grid_voltage_l3",        "Grid Voltage L3",       "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            1),
-    ("grid_frequency",         "Grid Frequency",        "Hz",  SensorDeviceClass.FREQUENCY,   SensorStateClass.MEASUREMENT,    None,                            2),
-    ("bms_charge_voltage",     "BMS Charge Voltage",    "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            2),
-    ("bms_discharge_voltage",  "BMS Discharge Voltage", "V",   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,    None,                            2),
-    ("bms_charge_current_limit",    "BMS Charge Current Limit",    "A", SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None,                       0),
-    ("bms_discharge_current_limit", "BMS Discharge Current Limit", "A", SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None,                       0),
-]
-
-
-# Single-phase profile (registers.decode_single_phase). Telemetry: the shared
-# rows minus the three-phase L1-L3 ones, plus PV2, CT, load, generator port,
-# the BMS block and the inverter state/alarm/fault words.
-SINGLE_PHASE_SENSORS: list[tuple] = [
-    row for row in SENSORS
-    if row[0] not in {
-        "inverter_power_l1", "inverter_power_l2", "inverter_power_l3",
-        "grid_voltage_l1", "grid_voltage_l2", "grid_voltage_l3", "max_sell_power",
-    }
-] + [
-    ("battery_current", "Battery Current", "A", SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None, 2),
-    ("pv1_power", "PV1 Power", "W", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, "mdi:solar-panel", 0),
-    ("pv2_power", "PV2 Power", "W", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, "mdi:solar-panel", 0),
-    ("pv2_voltage", "PV2 Voltage", "V", SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, "mdi:solar-panel", 1),
-    ("pv2_current", "PV2 Current", "A", SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, "mdi:solar-panel", 1),
-    ("grid_voltage", "Grid Voltage", "V", SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, None, 1),
-    ("grid_current", "Grid Current", "A", SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None, 2),
-    ("grid_inverter_side_power", "Grid Power (Inverter Side)", "W", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, "mdi:transmission-tower", 0),
-    ("external_ct_current", "External CT Current", "A", SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None, 2),
-    ("external_ct_power", "External CT Power", "W", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, None, 0),
-    ("load_voltage", "Load Voltage", "V", SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, None, 1),
-    ("load_frequency", "Load Frequency", "Hz", SensorDeviceClass.FREQUENCY, SensorStateClass.MEASUREMENT, None, 2),
-    ("inverter_output_power", "Inverter Output", "W", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, "mdi:lightning-bolt", 0),
-    ("inverter_output_voltage", "Inverter Output Voltage", "V", SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, None, 1),
-    ("inverter_output_current", "Inverter Output Current", "A", SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None, 2),
-    ("inverter_output_frequency", "Inverter Output Frequency", "Hz", SensorDeviceClass.FREQUENCY, SensorStateClass.MEASUREMENT, None, 2),
-    ("inverter_ac_temp", "Inverter AC Temperature", "°C", SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT, None, 1),
-    ("gen_power", "Generator Power", "W", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, "mdi:engine", 0),
-    ("gen_voltage", "Generator Voltage", "V", SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, "mdi:engine", 1),
-    ("gen_frequency", "Generator Frequency", "Hz", SensorDeviceClass.FREQUENCY, SensorStateClass.MEASUREMENT, "mdi:engine", 2),
-    ("daily_load", "Consumption Today", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, "mdi:home-lightning-bolt", 2),
-    ("daily_battery_charge", "Battery Charge Today", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, None, 2),
-    ("daily_battery_discharge", "Battery Discharge Today", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, None, 2),
-    ("daily_gen", "Generator Today", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, "mdi:engine", 2),
-    ("daily_inverter_energy", "Inverter Energy Today", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL, None, 2),
-    ("total_inverter_energy", "Inverter Energy Total", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL, None, 2),
-    ("total_consumption", "Consumption Total", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, "mdi:home-lightning-bolt", 2),
-    ("bms_soc", "BMS SOC", "%", SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT, None, 0),
-    ("bms_voltage", "BMS Voltage", "V", SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, None, 2),
-    ("bms_current", "BMS Current", "A", SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None, 0),
-    ("bms_temp", "BMS Temperature", "°C", SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT, None, 1),
-    ("device_state", "Inverter State", None, None, None, "mdi:state-machine", None),
-    ("alarm", "Inverter Alarm", None, None, None, "mdi:alert-outline", None),
-    ("fault", "Inverter Fault", None, None, None, "mdi:alert-octagon-outline", None),
-]
-
-# Single-phase settings, read on the slow tier and shown as diagnostics. Any
-# with a control entity (registers.PROFILES) is shown by that entity instead.
-SINGLE_PHASE_SETTINGS: list[tuple] = [
-    ("inverter_serial", "Inverter Serial", None, None, None, "mdi:identifier", None),
-    ("firmware_control", "Control Board Firmware", None, None, None, "mdi:chip", None),
-    ("firmware_comms", "Comms Board Firmware", None, None, None, "mdi:chip", None),
-    ("protocol_version", "Modbus Protocol", None, None, None, None, None),
-    ("rated_power", "Rated Power", "W", SensorDeviceClass.POWER, None, None, 0),
-    ("mppt_count", "MPPT Count", None, None, None, "mdi:solar-panel", None),
-    ("battery_mode", "Battery Mode", None, None, None, "mdi:battery-sync", None),
-    ("bms_protocol", "BMS Protocol", None, None, None, "mdi:battery-sync", None),
-    ("battery_capacity", "Battery Capacity", "Ah", None, None, "mdi:battery", 0),
-    ("battery_absorption_voltage", "Absorption Voltage", "V", SensorDeviceClass.VOLTAGE, None, None, 2),
-    ("battery_float_voltage", "Float Voltage", "V", SensorDeviceClass.VOLTAGE, None, None, 2),
-    ("battery_empty_voltage", "Empty Voltage", "V", SensorDeviceClass.VOLTAGE, None, None, 2),
-    ("max_charge_current", "Max Charge Current", "A", SensorDeviceClass.CURRENT, None, None, 0),
-    ("max_discharge_current", "Max Discharge Current", "A", SensorDeviceClass.CURRENT, None, None, 0),
-    ("batt_shutdown_soc", "Shutdown SOC", "%", None, None, "mdi:battery-off", 0),
-    ("batt_restart_soc", "Restart SOC", "%", None, None, "mdi:battery-sync", 0),
-    ("batt_low_soc", "Low SOC", "%", None, None, "mdi:battery-alert", 0),
-    ("batt_shutdown_voltage", "Shutdown Voltage", "V", SensorDeviceClass.VOLTAGE, None, None, 2),
-    ("batt_restart_voltage", "Restart Voltage", "V", SensorDeviceClass.VOLTAGE, None, None, 2),
-    ("batt_low_voltage", "Low Voltage", "V", SensorDeviceClass.VOLTAGE, None, None, 2),
-    ("grid_charge_start_soc", "Grid Charge Start SOC", "%", None, None, "mdi:transmission-tower-import", 0),
-    ("grid_charge_current", "Grid Charge Current", "A", SensorDeviceClass.CURRENT, None, "mdi:transmission-tower-import", 0),
-    ("gen_charge_start_soc", "Generator Charge Start SOC", "%", None, None, "mdi:engine", 0),
-    ("gen_charge_current", "Generator Charge Current", "A", SensorDeviceClass.CURRENT, None, "mdi:engine", 0),
-    ("energy_pattern", "Energy Pattern", None, None, None, "mdi:cog", None),
-    ("work_mode", "Work Mode", None, None, None, "mdi:cog", None),
-    ("io_mode", "GEN Port Mode", None, None, None, "mdi:engine", None),
-    ("max_sell_power", "Max Sell Power", "W", SensorDeviceClass.POWER, None, "mdi:transmission-tower-export", 0),
-    ("zero_export_power", "Zero Export Power", "W", SensorDeviceClass.POWER, None, None, 0),
-    ("grid_reconnect_time", "Grid Reconnect Time", "s", SensorDeviceClass.DURATION, None, None, 0),
-    ("grid_voltage_high_limit", "Grid Voltage High Limit", "V", SensorDeviceClass.VOLTAGE, None, None, 1),
-    ("grid_voltage_low_limit", "Grid Voltage Low Limit", "V", SensorDeviceClass.VOLTAGE, None, None, 1),
-    ("grid_frequency_high_limit", "Grid Frequency High Limit", "Hz", SensorDeviceClass.FREQUENCY, None, None, 2),
-    ("grid_frequency_low_limit", "Grid Frequency Low Limit", "Hz", SensorDeviceClass.FREQUENCY, None, None, 2),
-    ("gen_peak_power", "Generator Peak Shaving Power", "W", SensorDeviceClass.POWER, None, None, 0),
-    ("grid_peak_power", "Grid Peak Shaving Power", "W", SensorDeviceClass.POWER, None, None, 0),
-    ("alarm_code", "Alarm Code", None, None, None, None, None),
-    ("fault_code", "Fault Code", None, None, None, None, None),
-    ("bms_alarm_code", "BMS Alarm Code", None, None, None, None, None),
-    ("bms_fault_code", "BMS Fault Code", None, None, None, None, None),
-]
+from .models.base import Sensor as SensorDescription
+from .models import active_tou_slot
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    if coordinator.is_single_phase:
-        # Settings that have a control entity are shown by that entity instead.
-        controls = coordinator.register_profile.controls
-        entities = [DeyeSensor(coordinator, entry, *row) for row in SINGLE_PHASE_SENSORS]
-        entities += [
-            DeyeSettingSensor(coordinator, entry, *row)
-            for row in SINGLE_PHASE_SETTINGS if row[0] not in controls
-        ]
+    model = coordinator.model
+    keys = {point.key for point in model.points}
+    entities: list[SensorEntity] = []
+    for point in model.points:
+        for description in point.shows:
+            if not isinstance(description, SensorDescription):
+                continue
+            if point.key == "inverter_clock":
+                entities.append(DeyeInverterClockSensor(coordinator, entry, description))
+            else:
+                entities.append(DeyeSensor(coordinator, entry, point.key, description))
+
+    if (
+        model.capabilities.has_battery
+        and "total_consumption" in keys
+        and "daily_load" not in keys
+    ):
+        entities.append(DeyeDailyConsumptionSensor(coordinator, entry))
+    if model.capabilities.has_tou and "tou_slots" in keys:
         entities.append(DeyeTouScheduleSensor(coordinator, entry))
-        entities.append(DeyeInverterClockSensor(coordinator, entry))
+    if "inverter_clock" in keys:
         entities.append(DeyeClockSyncResultSensor(coordinator, entry))
         entities.append(DeyeClockDriftSensor(coordinator, entry))
-        async_add_entities(entities)
-        return
-    entities = [DeyeSensor(coordinator, entry, *row) for row in SENSORS]
-    entities.append(DeyeDailyConsumptionSensor(coordinator, entry))
-    entities.append(DeyeInverterClockSensor(coordinator, entry))
-    entities.append(DeyeClockSyncResultSensor(coordinator, entry))
-    entities.append(DeyeClockDriftSensor(coordinator, entry))
-    entities.append(DeyeClockTimeOfDayDriftSensor(coordinator, entry))
+    if model.capabilities.cloud_time_sync:
+        entities.append(DeyeClockTimeOfDayDriftSensor(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -185,19 +64,26 @@ async def async_setup_entry(
 class DeyeSensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, entry: ConfigEntry, key, name, unit,
-                 device_class, state_class, icon, precision):
+    def __init__(
+        self, coordinator, entry: ConfigEntry, key: str, description: SensorDescription
+    ):
         super().__init__(coordinator)
         self._key = key
         sn = entry.data[CONF_LOGGER_SN]
-        self._attr_name = name
+        self._attr_name = description.name
         self._attr_unique_id = f"{sn}_{key}"
-        self._attr_native_unit_of_measurement = unit
-        self._attr_device_class = device_class
-        self._attr_state_class = state_class
-        self._attr_suggested_display_precision = precision
-        if icon:
-            self._attr_icon = icon
+        self._attr_native_unit_of_measurement = description.unit
+        self._attr_device_class = (
+            SensorDeviceClass(description.device_class) if description.device_class else None
+        )
+        self._attr_state_class = (
+            SensorStateClass(description.state_class) if description.state_class else None
+        )
+        self._attr_suggested_display_precision = description.precision
+        if description.icon:
+            self._attr_icon = description.icon
+        if description.entity_category:
+            self._attr_entity_category = EntityCategory(description.entity_category)
         self._attr_device_info = device_info(sn)
 
     @property
@@ -205,12 +91,6 @@ class DeyeSensor(CoordinatorEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get(self._key)
-
-
-class DeyeSettingSensor(DeyeSensor):
-    """A single-phase inverter setting, read-only (see SINGLE_PHASE_SETTINGS)."""
-
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
 
 class DeyeTouScheduleSensor(DeyeSensor):
@@ -224,8 +104,8 @@ class DeyeTouScheduleSensor(DeyeSensor):
 
     def __init__(self, coordinator, entry: ConfigEntry):
         super().__init__(
-            coordinator, entry, "tou_schedule", "Time of Use", None,
-            None, None, "mdi:calendar-clock", None,
+            coordinator, entry, "tou_schedule",
+            SensorDescription("Time of Use", icon="mdi:calendar-clock"),
         )
 
     @property
@@ -267,10 +147,19 @@ class DeyeInverterClockSensor(DeyeSensor):
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, coordinator, entry: ConfigEntry):
+    def __init__(
+        self,
+        coordinator,
+        entry: ConfigEntry,
+        description: SensorDescription | None = None,
+    ):
+        if description is None:
+            point = next(point for point in coordinator.model.points if point.key == "inverter_clock")
+            description = next(
+                show for show in point.shows if isinstance(show, SensorDescription)
+            )
         super().__init__(
-            coordinator, entry, "inverter_clock", "Inverter Clock", None,
-            SensorDeviceClass.TIMESTAMP, None, "mdi:clock-outline", None,
+            coordinator, entry, "inverter_clock", description,
         )
 
     @property
@@ -346,9 +235,11 @@ class DeyeClockDriftSensor(DeyeSensor):
 
     def __init__(self, coordinator, entry: ConfigEntry):
         super().__init__(
-            coordinator, entry, "inverter_clock_drift", "Inverter Clock Drift", "s",
-            SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT,
-            "mdi:clock-alert-outline", 0,
+            coordinator, entry, "inverter_clock_drift",
+            SensorDescription(
+                "Inverter Clock Drift", "s", "duration", "measurement",
+                "mdi:clock-alert-outline", 0, "diagnostic",
+            ),
         )
 
 
@@ -366,9 +257,10 @@ class DeyeClockTimeOfDayDriftSensor(DeyeSensor):
     def __init__(self, coordinator, entry: ConfigEntry):
         super().__init__(
             coordinator, entry, "inverter_time_of_day_drift",
-            "Inverter Clock Drift (Time of Day)", "s",
-            SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT,
-            "mdi:clock-fast", 0,
+            SensorDescription(
+                "Inverter Clock Drift (Time of Day)", "s", "duration", "measurement",
+                "mdi:clock-fast", 0, "diagnostic",
+            ),
         )
 
 

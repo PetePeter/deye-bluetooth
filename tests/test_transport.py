@@ -10,6 +10,7 @@ Fakes ``establish_connection`` so no radio/bleak backend is needed.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,19 +22,23 @@ class FakeBleakClient:
 
     def __init__(
         self, *, disconnect_hangs: bool = False, start_notify_raises: bool = False,
-        reply: str | None = None,
+        reply: str | None = None, services=None,
     ):
         self._disconnect_hangs = disconnect_hangs
         self._start_notify_raises = start_notify_raises
         self._reply = reply
+        self.services = services
         self.written: list[bytes] = []
         self._notify_cb = None
         self.start_notify_called = False
+        self.started_notify_chars: list[str] = []
         self.stop_notify_called = False
+        self.stopped_notify_chars: list[str] = []
         self.disconnect_called = False
 
-    async def start_notify(self, _char, _cb) -> None:
+    async def start_notify(self, char, _cb) -> None:
         self.start_notify_called = True
+        self.started_notify_chars.append(char)
         self._notify_cb = _cb
         if self._start_notify_raises:
             raise RuntimeError("br-connection-canceled")
@@ -44,8 +49,9 @@ class FakeBleakClient:
         if self._reply is not None and self._notify_cb is not None:
             self._notify_cb(None, bytearray(self._reply.encode()))
 
-    async def stop_notify(self, _char) -> None:
+    async def stop_notify(self, char) -> None:
         self.stop_notify_called = True
+        self.stopped_notify_chars.append(char)
 
     async def disconnect(self) -> None:
         self.disconnect_called = True
@@ -137,6 +143,85 @@ def DeyeBleTransport_with_short_timeout(*, client_timeout: float):
     transport = t.DeyeBleTransport(ble_device=object())
     transport._disconnect_timeout = client_timeout
     return transport
+
+
+def _console_services(write_uuid: str, notify_uuid: str):
+    return [SimpleNamespace(characteristics=[
+        SimpleNamespace(uuid=write_uuid, properties={"write"}),
+        SimpleNamespace(uuid=notify_uuid, properties={"notify"}),
+    ])]
+
+
+@pytest.mark.asyncio
+async def test_default_console_uuids_skip_discovery_probe(patch_connect):
+    client = FakeBleakClient(
+        services=_console_services(t.WRITE_CHAR, t.NOTIFY_CHAR),
+    )
+    patch_connect(client)
+    transport = t.DeyeBleTransport(SimpleNamespace(address="AA:BB"))
+
+    await transport.connect()
+
+    assert client.started_notify_chars == [t.NOTIFY_CHAR]
+    assert client.written == []
+    await transport.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_discovery_finds_console_pair_and_skips_duplicate_handshake(patch_connect):
+    write_uuid = "00000001-0000-1000-8000-00805f9b34fb"
+    notify_uuid = "00000002-0000-1000-8000-00805f9b34fb"
+    device = SimpleNamespace(address="AA:CC")
+    client = FakeBleakClient(
+        reply="+ok=21521,21521",
+        services=_console_services(write_uuid, notify_uuid),
+    )
+    patch_connect(client)
+    transport = t.DeyeBleTransport(device)
+
+    await transport.connect()
+    assert transport.console_uuids == (write_uuid, notify_uuid)
+    assert client.written == [b"AT+DTYPE\n"]
+
+    await transport.handshake()
+
+    assert client.written == [b"AT+DTYPE\n"]
+    await transport.disconnect()
+
+    next_client = FakeBleakClient(
+        reply="+ok=21521,21521",
+        services=_console_services(write_uuid, notify_uuid),
+    )
+    patch_connect(next_client)
+    next_transport = t.DeyeBleTransport(
+        device, write_uuid=write_uuid, notify_uuid=notify_uuid,
+    )
+
+    await next_transport.connect()
+
+    assert next_client.written == []
+    await next_transport.handshake()
+    assert next_client.written == [b"AT+DTYPE\n"]
+    await next_transport.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_two_transports_do_not_share_discovered_console_state(patch_connect):
+    write_uuid = "00000003-0000-1000-8000-00805f9b34fb"
+    notify_uuid = "00000004-0000-1000-8000-00805f9b34fb"
+    device = SimpleNamespace(address="AA:DD")
+    client = FakeBleakClient(
+        reply="+ok=21521,21521",
+        services=_console_services(write_uuid, notify_uuid),
+    )
+    patch_connect(client)
+    first = t.DeyeBleTransport(device)
+    await first.connect()
+    await first.disconnect()
+
+    second = t.DeyeBleTransport(device)
+
+    assert second.console_uuids == (t.WRITE_CHAR, t.NOTIFY_CHAR)
 
 
 # --- Contiguous block write -------------------------------------------------
