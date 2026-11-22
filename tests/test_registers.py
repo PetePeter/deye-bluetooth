@@ -502,3 +502,9 @@ def test_decode_publishes_time_sync(raw, expected):
 
 def test_decode_omits_time_sync_when_block_absent(poll):
     assert "time_sync" not in poll
+
+
+def test_solar_sell_decode():
+    # 0x008D (141): 1 = solar sell on (confirmed by live MITM write-diff).
+    assert r.decode({141: [1]})["solar_sell_enabled"] is True
+    assert r.decode({141: [0]})["solar_sell_enabled"] is False

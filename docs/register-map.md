@@ -26,7 +26,7 @@ the grid / discharge into the house.
 | 109 | `0x006D` | Max discharge current | A | CONF | `max_discharge_current` |
 | 115–117 | `0x0073`–`0x0075` | Battery shutdown / restart / low SOC | % | CONF | `batt_*_soc` |
 | 128 | `0x0080` | Grid charge current | A | ~ | — |
-| 141 | `0x008D` | Solar sell on/off | 0/1 | CONF | — |
+| 141 | `0x008D` | Solar sell on/off | 0/1 | CONF | `solar_sell_enabled` |
 | 142 | `0x008E` | Work mode: 0 Selling First, 1 Zero Export to Load, 2 Zero Export to CT | enum | CONF | `work_mode` |
 | 143 | `0x008F` | Max sell power | W | CONF | `max_sell_power` |
 | 145 | `0x0091` | TOU enable | 0/1 | CONF | — |
