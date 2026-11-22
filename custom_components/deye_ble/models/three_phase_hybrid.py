@@ -119,6 +119,12 @@ def _hhmm_value(words, register):
 POINTS = (
     Point("solar_power", read=scalar_read(672, factor=1, signed=False, offset=0), show=Sensor("Solar Power", unit="W", device_class="power", state_class="measurement", icon="mdi:solar-power", precision=0), tier="live"),
     Point("grid_power", read=scalar_read(607, factor=1, signed=True, offset=0), show=Sensor("Grid Power", unit="W", device_class="power", state_class="measurement", icon="mdi:transmission-tower", precision=0), tier="live"),
+    Point("grid_power_l1", read=scalar_read(604, factor=1, signed=True, offset=0), show=Sensor("Grid Power L1", unit="W", device_class="power", state_class="measurement", icon="mdi:transmission-tower", precision=0), tier="live"),
+    Point("grid_power_l2", read=scalar_read(605, factor=1, signed=True, offset=0), show=Sensor("Grid Power L2", unit="W", device_class="power", state_class="measurement", icon="mdi:transmission-tower", precision=0), tier="live"),
+    Point("grid_power_l3", read=scalar_read(606, factor=1, signed=True, offset=0), show=Sensor("Grid Power L3", unit="W", device_class="power", state_class="measurement", icon="mdi:transmission-tower", precision=0), tier="live"),
+    Point("grid_current_l1", read=scalar_read(610, factor=0.01, signed=True, offset=0), show=Sensor("Grid Current L1", unit="A", device_class="current", state_class="measurement", precision=2), tier="live"),
+    Point("grid_current_l2", read=scalar_read(611, factor=0.01, signed=True, offset=0), show=Sensor("Grid Current L2", unit="A", device_class="current", state_class="measurement", precision=2), tier="live"),
+    Point("grid_current_l3", read=scalar_read(612, factor=0.01, signed=True, offset=0), show=Sensor("Grid Current L3", unit="A", device_class="current", state_class="measurement", precision=2), tier="live"),
     Point("battery_power", read=scalar_read(590, factor=1, signed=True, offset=0), show=Sensor("Battery Power", unit="W", device_class="power", state_class="measurement", icon="mdi:battery-charging", precision=0), tier="live"),
     Point("house_load", read=scalar_read(643, factor=1, signed=True, offset=0), show=Sensor("House Load", unit="W", device_class="power", state_class="measurement", icon="mdi:home-lightning-bolt", precision=0), tier="live"),
     Point("ups_power", read=scalar_read(653, factor=1, signed=True, offset=0), show=Sensor("UPS Power", unit="W", device_class="power", state_class="measurement", icon="mdi:power-plug", precision=0), tier="live"),

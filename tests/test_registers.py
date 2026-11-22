@@ -31,6 +31,9 @@ FRAMES: dict[int, str] = {
 }
 
 GRID_FREQUENCY_WORDS = {0x0261: [5000]}
+# Grid current L1-L3 at 0x0262-0x0264 (610-612), from the 2026-06-23 cloud MITM
+# snapshot (local-deye-cloud docs/full-read-snapshot-2026-06-23.md).
+GRID_CURRENT_WORDS = {0x0262: [1585, 1972, 1686]}
 
 
 def _words_by_reg(*block_starts: int) -> dict[int, list[int]]:
@@ -82,6 +85,29 @@ def test_battery_block_0x024A(poll):
 
 def test_grid_power_signed_block_0x0256(poll):
     assert poll["grid_power"] == -42  # 0xFFD6 signed, register 0x025F
+
+
+def test_grid_phase_powers_block_0x0256(poll):
+    # 604-606 are the per-phase split of grid_power (607).
+    assert poll["grid_power_l1"] == -90   # 0xFFA6
+    assert poll["grid_power_l2"] == -256  # 0xFF00
+    assert poll["grid_power_l3"] == 304   # 0x0130
+
+
+def test_grid_phase_sum_matches_grid_power(poll):
+    assert poll["grid_power_l1"] + poll["grid_power_l2"] + poll["grid_power_l3"] == poll["grid_power"]
+
+
+def test_grid_phase_sum_matches_grid_power_in_mitm_snapshot():
+    # 2026-06-23 snapshot importing ~12.4 kW: 604-607 = 3689, 4702, 3983, 12374.
+    d = r.decode({604: [3689, 4702, 3983, 12374]})
+    assert (d["grid_power_l1"], d["grid_power_l2"], d["grid_power_l3"]) == (3689, 4702, 3983)
+    assert d["grid_power_l1"] + d["grid_power_l2"] + d["grid_power_l3"] == d["grid_power"]
+
+
+def test_grid_currents_decode():
+    d = r.decode(GRID_CURRENT_WORDS)
+    assert (d["grid_current_l1"], d["grid_current_l2"], d["grid_current_l3"]) == (15.85, 19.72, 16.86)
 
 
 def test_inverter_phases_block_0x0270(poll):

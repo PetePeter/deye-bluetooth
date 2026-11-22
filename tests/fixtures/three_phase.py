@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from custom_components.deye_ble import models, protocol
-from tests.test_registers import CLOCK_WORDS, FRAMES, GRID_FREQUENCY_WORDS
+from tests.test_registers import CLOCK_WORDS, FRAMES, GRID_CURRENT_WORDS, GRID_FREQUENCY_WORDS
 
 
 def _zero_frame(count: int) -> str:
@@ -25,5 +25,6 @@ def decoded_words() -> dict[int, list[int]]:
         for start, frame in FULL_FRAMES.items()
     }
     words.update(GRID_FREQUENCY_WORDS)
+    words.update(GRID_CURRENT_WORDS)
     words[models.REG_CLOCK] = list(CLOCK_WORDS)
     return words

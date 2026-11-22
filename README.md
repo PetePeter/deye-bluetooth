@@ -215,6 +215,12 @@ flowchart TD
 | `inverter_power_l1` | Inverter Output L1 | W | `0x0279` |
 | `inverter_power_l2` | Inverter Output L2 | W | `0x027A` |
 | `inverter_power_l3` | Inverter Output L3 | W | `0x027B` |
+| `grid_power_l1` | Grid Power L1 | W | `0x025C` |
+| `grid_power_l2` | Grid Power L2 | W | `0x025D` |
+| `grid_power_l3` | Grid Power L3 | W | `0x025E` |
+| `grid_current_l1` | Grid Current L1 | A | `0x0262` |
+| `grid_current_l2` | Grid Current L2 | A | `0x0263` |
+| `grid_current_l3` | Grid Current L3 | A | `0x0264` |
 | `grid_voltage_l1` | Grid Voltage L1 | V | `0x0273` |
 | `grid_voltage_l2` | Grid Voltage L2 | V | `0x0275` |
 | `grid_voltage_l3` | Grid Voltage L3 | V | `0x0274` |
@@ -275,7 +281,7 @@ protecting against erroneous writes. Instead, it exposes:
 
 - **Solar & PV Strings**: `Solar Power`, `PV Input Power`, `Solar Today`, `Solar Total`,
   `PV1 Power`, `PV1 Voltage`, `PV1 Current`, `PV2 Power`, `PV2 Voltage`, `PV2 Current`.
-- **Three-phase Grid**: `Grid Voltage L1`, `Grid Voltage L2`, `Grid Voltage L3`,
+- **Three-phase Grid**: `Grid Power L1`, `Grid Power L2`, `Grid Power L3`, `Grid Voltage L1`, `Grid Voltage L2`, `Grid Voltage L3`,
   `Grid Current L1`, `Grid Current L2`, `Grid Current L3`, `Grid Frequency`.
 - **Inverter Health & State**: `Inverter Temperature` (DC side), `Inverter AC Temperature`,
   `Inverter State`, `Inverter Alarm`, `Inverter Fault`.
