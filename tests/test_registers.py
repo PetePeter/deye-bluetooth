@@ -126,6 +126,22 @@ def test_load_block_0x0280(poll):
     assert poll["house_load"] == 1309  # 0x0283
     assert poll["ups_power"] == 1309   # 0x028D (mirrors load while grid-connected)
 
+def test_house_load_phases_block_0x0280(poll):
+    # 640-642 split house_load (643) per phase.
+    assert (poll["house_load_l1"], poll["house_load_l2"], poll["house_load_l3"]) == (344, 167, 798)
+    assert poll["house_load_l1"] + poll["house_load_l2"] + poll["house_load_l3"] == poll["house_load"]
+
+def test_house_load_phase_equals_grid_plus_inverter(poll):
+    # Energy balance per phase: load = grid import + inverter output.
+    for phase in ("l1", "l2", "l3"):
+        assert poll[f"house_load_{phase}"] == poll[f"grid_power_{phase}"] + poll[f"inverter_power_{phase}"]
+
+def test_house_load_phases_in_mitm_snapshot():
+    # 2026-06-23 snapshot: 640-643 = 196, 1556, 865, 2617.
+    d = r.decode({640: [196, 1556, 865, 2617]})
+    assert (d["house_load_l1"], d["house_load_l2"], d["house_load_l3"]) == (196, 1556, 865)
+    assert d["house_load_l1"] + d["house_load_l2"] + d["house_load_l3"] == d["house_load"]
+
 
 def test_solar_power_block_0x02A0(poll):
     assert poll["solar_power"] == 1783  # 0x02A0

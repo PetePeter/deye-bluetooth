@@ -75,7 +75,10 @@ the grid / discharge into the house.
 | 627 / 628 / 629 | `0x0273`–`0x0275` | Grid voltage L1 / **L3** / **L2** (note the order) | ÷10 V | CONF | `grid_voltage_l*` |
 | 633–635 | `0x0279`–`0x027B` | Inverter output L1/L2/L3 | W, signed | CONF | `inverter_power_l*` |
 | 636 | `0x027C` | Inverter output total | W, signed | CONF (sums 633–635) | — |
+| 640–642 | `0x0280`–`0x0282` | House load L1/L2/L3 | W, signed | CONF (sums to 643; = grid + inverter per phase) | `house_load_l1..3` |
 | 643 | `0x0283` | House load | W, signed | CONF | `house_load` |
+| 644–646 | `0x0284`–`0x0286` | Load voltage L1/L2/L3 | ÷10 V | ~ | — |
+| 650–652 | `0x028A`–`0x028C` | UPS/backup load L1/L2/L3 | W, signed | ~ (sums to 653; equal to 640–642 in every capture so far) | — |
 | 653 | `0x028D` | UPS power | W, signed | CONF | `ups_power` |
 | 672 | `0x02A0` | Solar power | W | CONF | `solar_power` |
 | 676 / 677 | `0x02A4` / `0x02A5` | PV1 voltage / current | ÷10 | CONF | `pv1_voltage`, `pv1_current` |
@@ -88,6 +91,27 @@ the grid / discharge into the house.
 616-619  3638  4703  3994  12335   (external CT; sums to 12335)
 622-625  3689  4702  3983  12374   (mirror of 604-607)
 ```
+
+### Load phase evidence
+
+Per phase, house load = grid power + inverter output (signed), and the three
+phases sum to 643:
+
+```text
+                       L1     L2     L3    total
+BLE capture (0x0270/0x0280 frames in tests/test_registers.py)
+  grid 604-606        -90   -256    304
+  inverter 633-635    434    423    494
+  house load 640-642  344    167    798   1309 (= 643)
+MITM 2026-06-23
+  grid 604-606       3689   4702   3983
+  inverter 633-635  -3493  -3146  -3118
+  house load 640-642  196   1556    865   2617 (= 643)
+```
+
+Both captures show 650–653 equal to 640–643, so which block is grid-side house
+load and which is backup-port load is not yet proven by a capture with a load
+on only one port.
 
 ## Source captures
 

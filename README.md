@@ -196,6 +196,9 @@ flowchart TD
 |-----|------|------|-----------------|
 | `solar_power` | Solar Power | W | `0x02A0` |
 | `house_load` | House Load | W | `0x0283` |
+| `house_load_l1` | House Load L1 | W | `0x0280` |
+| `house_load_l2` | House Load L2 | W | `0x0281` |
+| `house_load_l3` | House Load L3 | W | `0x0282` |
 | `grid_power` | Grid Power | W | `0x025F` |
 | `battery_power` | Battery Power | W | `0x024E` |
 | `ups_power` | UPS Power | W | `0x028D` |
